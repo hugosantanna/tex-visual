@@ -1,0 +1,177 @@
+:root {
+  --tv-font: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --tv-mono: var(--vscode-editor-font-family, ui-monospace, "SF Mono", Menlo, monospace);
+  --tv-size: 16px;
+  --tv-width: 46rem;
+  --tv-fg: var(--vscode-editor-foreground, #1f2328);
+  --tv-bg: var(--vscode-editor-background, #ffffff);
+  --tv-dim: var(--vscode-descriptionForeground, #6e7781);
+  --tv-accent: var(--vscode-textLink-foreground, #0969da);
+  --tv-err: var(--vscode-errorForeground, #cf222e);
+  --tv-tint: color-mix(in srgb, var(--tv-fg) 6%, transparent);
+  --tv-rule: color-mix(in srgb, var(--tv-fg) 22%, transparent);
+  --tv-sel: var(--vscode-editor-selectionBackground, #b6d6fd);
+}
+html, body { height: 100%; }
+body { margin: 0; padding: 0 !important; background: var(--tv-bg); color: var(--tv-fg); overflow: hidden; }
+#editor { height: 100vh; }
+
+.cm-editor { height: 100%; background: var(--tv-bg); color: var(--tv-fg); }
+.cm-editor.cm-focused { outline: none; }
+.cm-editor .cm-scroller {
+  font-family: var(--tv-font); font-size: var(--tv-size); line-height: 1.62; overflow: auto;
+  font-variant-numeric: lining-nums;
+}
+.cm-editor .cm-content {
+  max-width: var(--tv-width); margin: 0 auto; padding: 26px 30px 45vh; box-sizing: border-box;
+  caret-color: var(--vscode-editorCursor-foreground, var(--tv-fg));
+}
+.cm-editor .cm-line {
+  padding: 0 2px 0 calc(6px + var(--tv-pad, 0px) + var(--tv-indent, 0) * 1.9em + var(--tv-bar, 0) * 15px);
+}
+.cm-editor .cm-line:has(> br:only-child) { line-height: 0.85; }
+/* prose wrapping: spaces at a wrap point hang instead of starting the next line */
+.tv-visual-mode .cm-content.cm-lineWrapping { white-space: pre-wrap; }
+.cm-editor .cm-cursor { border-left: 1.5px solid var(--vscode-editorCursor-foreground, var(--tv-fg)); }
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { background: var(--tv-sel); }
+
+/* ---------- source fragments shown inside the visual view */
+.tv-cs, .tv-src { font-family: var(--tv-mono); font-size: 0.8em; color: var(--tv-dim); font-style: normal; font-weight: normal; }
+.tv-math-src { background: var(--tv-tint); border-radius: 3px; padding: 1px 0; color: var(--tv-fg); }
+.cm-line.tv-src-line { font-family: var(--tv-mono); font-size: 0.8em; background: var(--tv-tint); line-height: 1.55; text-align: left; }
+.cm-line.tv-pre { font-family: var(--tv-mono); font-size: 0.78em; color: var(--tv-dim); line-height: 1.5; }
+.tv-comment { color: var(--tv-dim); font-size: 0.82em; font-style: italic; }
+.cm-line.tv-comment-line { color: var(--tv-dim); font-size: 0.82em; font-style: italic; }
+
+.tv-src .tok-cmd, .tv-cs .tok-cmd, .tv-src-line .tok-cmd, .tv-pre .tok-cmd,
+.tv-source-mode .tok-cmd { color: var(--vscode-terminal-ansiBlue, #0550ae); }
+.tv-src .tok-atom, .tv-src-line .tok-atom, .tv-pre .tok-atom,
+.tv-source-mode .tok-atom { color: var(--vscode-terminal-ansiMagenta, #8250df); }
+.tv-src .tok-number, .tv-src-line .tok-number, .tv-source-mode .tok-number { color: var(--vscode-terminal-ansiCyan, #1b7c83); }
+.tv-src .tok-string, .tv-src-line .tok-string, .tv-source-mode .tok-string { color: var(--vscode-terminal-ansiGreen, #116329); }
+.tv-src .tok-var, .tv-src-line .tok-var, .tv-source-mode .tok-var { color: var(--vscode-terminal-ansiMagenta, #8250df); }
+.tv-src .tok-bracket, .tv-cs .tok-bracket, .tv-src-line .tok-bracket, .tv-pre .tok-bracket,
+.tv-source-mode .tok-bracket { color: var(--tv-dim); }
+.tv-source-mode .tok-comment, .tv-pre .tok-comment, .tv-src-line .tok-comment { color: var(--tv-dim); font-style: italic; }
+.tv-source-mode .tok-invalid { color: var(--tv-err); }
+
+/* ---------- source mode */
+.tv-source-mode .cm-scroller { font-family: var(--tv-mono); font-size: var(--vscode-editor-font-size, 13px); line-height: 1.55; font-variant-numeric: normal; }
+.tv-source-mode .cm-content { max-width: 60rem; }
+.tv-source-mode .cm-line:has(> br:only-child) { line-height: inherit; }
+
+/* ---------- math */
+.katex { font-size: 1.08em; }
+.tv-math { cursor: text; }
+.tv-glue { font-family: var(--tv-font); font-size: calc(1em / 1.08); }
+.tv-nowrap { white-space: nowrap; }
+.tv-display { text-align: center; padding: 0.5em 0 0.5em calc(var(--tv-indent, 0) * 1.9em); overflow-x: auto; overflow-y: hidden; cursor: text; }
+.tv-display .katex-display { margin: 0; }
+.tv-display-inline { display: inline-block; width: 100%; padding: 0.3em 0; }
+.tv-preview { background: var(--tv-tint); border-bottom: 1px dashed var(--tv-rule); }
+.tv-math-err { color: var(--tv-err); }
+.tv-stale > * { opacity: 0.45; }
+.tv-math-tip.tv-stale { border-style: dashed; }
+.tv-in-thm { box-shadow: inset 2px 0 0 var(--tv-rule); }
+.tv-math-tip {
+  padding: 5px 10px; background: var(--vscode-editorHoverWidget-background, var(--tv-bg));
+  color: var(--vscode-editorHoverWidget-foreground, var(--tv-fg));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--tv-rule)); border-radius: 5px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14); font-size: 16px; max-width: 80vw; overflow-x: auto;
+}
+.cm-editor .cm-tooltip.tv-math-tip { z-index: 50; }
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete {
+  background: var(--vscode-editorSuggestWidget-background, var(--tv-bg));
+  color: var(--vscode-editorSuggestWidget-foreground, var(--tv-fg));
+  border: 1px solid var(--vscode-editorSuggestWidget-border, var(--tv-rule)); border-radius: 4px;
+  font-family: var(--tv-mono); font-size: 12px;
+}
+.cm-editor .cm-tooltip-autocomplete ul li[aria-selected] {
+  background: var(--vscode-editorSuggestWidget-selectedBackground, var(--tv-sel));
+  color: var(--vscode-editorSuggestWidget-selectedForeground, var(--tv-fg));
+}
+
+/* ---------- headings and title */
+.cm-line.tv-h, .tv-bib-head { font-weight: 700; line-height: 1.3; font-variant-numeric: lining-nums; }
+.cm-line.tv-h0 { font-size: 1.7em; padding-top: 1em; padding-bottom: 0.2em; }
+.cm-line.tv-h1, .tv-bib-head.tv-h1 { font-size: 1.42em; padding-top: 0.9em; padding-bottom: 0.15em; }
+.cm-line.tv-h2 { font-size: 1.2em; padding-top: 0.7em; padding-bottom: 0.1em; }
+.cm-line.tv-h3 { font-size: 1.05em; padding-top: 0.5em; }
+.tv-bib-head { padding-left: 6px; }
+.tv-secnum { margin-right: 0.65em; }
+.tv-run-head { font-weight: 700; }
+.tv-titleblock { text-align: center; padding: 0.6em 0 1.2em; }
+.tv-title { font-size: 1.95em; font-weight: 700; line-height: 1.25; }
+.tv-author { font-size: 1.12em; padding-top: 0.7em; }
+.tv-date { color: var(--tv-dim); padding-top: 0.35em; }
+.tv-abstract-head { text-align: center; font-weight: 700; font-size: 0.95em; padding: 0.2em 0 0.3em; }
+.cm-line.tv-abstract { --tv-pad: 2.6em; padding-right: 2.6em; font-size: 0.94em; }
+
+/* ---------- inline styles */
+.tv-em { font-style: italic; }
+.tv-b { font-weight: 700; }
+.tv-sc { font-variant: small-caps; }
+.tv-tt { font-family: var(--tv-mono); font-size: 0.86em; }
+.tv-u { text-decoration: underline; }
+.tv-sf { font-family: system-ui, sans-serif; }
+.tv-sup { vertical-align: super; font-size: 0.75em; }
+.tv-sub { vertical-align: sub; font-size: 0.75em; }
+.tv-fn { font-size: 0.85em; color: var(--tv-dim); background: var(--tv-tint); border-radius: 3px; }
+.tv-fn-mark { font-size: 0.62em; vertical-align: super; color: var(--tv-accent); margin: 0 3px 0 1px; font-family: system-ui, sans-serif; }
+.tv-link { color: var(--tv-accent); }
+.tv-sym { white-space: pre; }
+
+/* ---------- references */
+.tv-ref, .tv-cite { color: var(--tv-accent); cursor: pointer; }
+.tv-missing { color: var(--tv-err); text-decoration: underline dotted; }
+.tv-label {
+  font-family: var(--tv-mono); font-size: 0.62em; font-style: normal; font-weight: normal; color: var(--tv-dim);
+  border: 1px solid var(--tv-rule); border-radius: 3px; padding: 0 4px; margin: 0 4px; vertical-align: 0.2em;
+  white-space: nowrap;
+}
+.tv-input { font-family: var(--tv-mono); font-size: 0.8em; color: var(--tv-accent); background: var(--tv-tint); border-radius: 3px; padding: 1px 6px; cursor: pointer; }
+
+/* ---------- theorems, lists */
+.cm-line.tv-thm { --tv-bar: 1; box-shadow: inset 2px 0 0 var(--tv-rule); }
+.tv-thm-head { white-space: pre-wrap; }
+.tv-qed { text-align: right; padding: 0 4px 0.2em; line-height: 1.2; }
+.tv-qed-inline { float: right; }
+.cm-line.tv-li-first { text-indent: -1.9em; }
+.tv-bullet { display: inline-block; min-width: 1.9em; text-indent: 0; box-sizing: border-box; padding-right: 0.35em; }
+.tv-bullet:not(.tv-bullet-custom) { text-align: right; padding-right: 0.55em; }
+.tv-li-first .tv-cs { text-indent: 0; }
+.cm-line.tv-quote { --tv-pad: 2em; padding-right: 2em; }
+
+/* ---------- floats, tables, bibliography */
+.cm-line.tv-center { text-align: center; }
+.cm-line.tv-caption { text-align: center; font-size: 0.92em; padding-top: 0.2em; padding-bottom: 0.2em; }
+.tv-caption-label { font-weight: 700; }
+.tv-tablewrap { text-align: center; padding: 0.5em 0; overflow-x: auto; }
+.tv-table { display: inline-table; border-collapse: collapse; font-size: 0.93em; line-height: 1.45; font-variant-numeric: lining-nums tabular-nums; }
+.tv-table td { padding: 0.2em 0.8em; vertical-align: baseline; }
+.tv-table tr.tv-rule-heavy td { border-top: 1.5px solid currentColor; }
+.tv-table tr.tv-rule-light td { border-top: 1px solid var(--tv-rule); }
+.tv-table tr.tv-rule-bottom-heavy td { border-bottom: 1.5px solid currentColor; }
+.tv-table tr.tv-rule-bottom-light td { border-bottom: 1px solid var(--tv-rule); }
+.tv-figure { text-align: center; padding: 0.5em 0; display: block; }
+span.tv-figure { display: inline-block; padding: 0; }
+.tv-figure img { max-width: 100%; height: auto; border-radius: 2px; background: #fff; }
+.tv-figure-ph { font-family: var(--tv-mono); font-size: 0.78em; color: var(--tv-dim); border: 1px dashed var(--tv-rule); border-radius: 4px; padding: 6px 12px; display: inline-block; }
+.cm-line.tv-bib { --tv-pad: 1.6em; text-indent: -1.6em; font-size: 0.93em; }
+
+/* ---------- preamble */
+.tv-preamble-row { padding: 0 6px 6px; }
+.tv-preamble {
+  display: inline-block; font-family: system-ui, -apple-system, sans-serif; font-size: 11.5px; color: var(--tv-dim);
+  border: 1px dashed var(--tv-rule); border-radius: 5px; padding: 2px 9px; cursor: pointer; user-select: none;
+}
+.tv-preamble:hover { color: var(--tv-fg); border-style: solid; }
+
+/* ---------- search panel */
+.cm-editor .cm-panels { background: var(--vscode-editorWidget-background, var(--tv-bg)); color: var(--tv-fg); border-color: var(--tv-rule); font-family: system-ui, sans-serif; font-size: 12px; }
+.cm-editor .cm-panels.cm-panels-top { border-bottom: 1px solid var(--tv-rule); }
+.cm-editor .cm-textfield { background: var(--vscode-input-background, var(--tv-bg)); color: var(--vscode-input-foreground, var(--tv-fg)); border: 1px solid var(--vscode-input-border, var(--tv-rule)); border-radius: 3px; }
+.cm-editor .cm-button { background: var(--vscode-button-secondaryBackground, var(--tv-tint)); color: var(--vscode-button-secondaryForeground, var(--tv-fg)); border: 1px solid var(--tv-rule); border-radius: 3px; background-image: none; }
+.cm-editor .cm-searchMatch { background: color-mix(in srgb, #f5c400 45%, transparent); }
+.cm-editor .cm-searchMatch-selected { background: color-mix(in srgb, #ff8a00 60%, transparent); }

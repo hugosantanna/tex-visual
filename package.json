@@ -1,0 +1,209 @@
+{
+  "name": "tex-visual",
+  "displayName": "TeX Visual",
+  "description": "Overleaf-style visual editor for LaTeX: math, headings, references, tables and figures render in place while you edit the .tex source.",
+  "version": "0.1.0",
+  "publisher": "hugosantanna",
+  "private": true,
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hugosantanna/tex-visual.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hugosantanna/tex-visual/issues"
+  },
+  "homepage": "https://github.com/hugosantanna/tex-visual#readme",
+  "keywords": [
+    "latex",
+    "tex",
+    "overleaf",
+    "visual editor",
+    "wysiwyg",
+    "katex",
+    "math",
+    "preview"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "main": "./extension.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "package": "node build.mjs && vsce package --no-dependencies -o tex-visual.vsix",
+    "install-local": "npm run package && code --install-extension tex-visual.vsix --force",
+    "pretest": "node build.mjs",
+    "test": "node --test test/scan.test.mjs && node test/shot.mjs examples/demo.tex .shots test/demo.scenario.mjs && node test/shot.mjs examples/demo.tex .shots test/fuzz.scenario.mjs",
+    "test:e2e": "bash test/e2e/run.sh"
+  },
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "texVisual.editor",
+        "displayName": "TeX Visual",
+        "selector": [
+          {
+            "filenamePattern": "*.tex"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "texVisual.open",
+        "title": "Open Visual Editor",
+        "category": "TeX Visual",
+        "icon": "$(book)"
+      },
+      {
+        "command": "texVisual.openToSide",
+        "title": "Open Visual Editor to the Side",
+        "category": "TeX Visual",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "texVisual.toggleSource",
+        "title": "Toggle Rendered / Raw Source",
+        "category": "TeX Visual",
+        "icon": "$(code)"
+      },
+      {
+        "command": "texVisual.togglePreamble",
+        "title": "Toggle Preamble",
+        "category": "TeX Visual"
+      },
+      {
+        "command": "texVisual.showSource",
+        "title": "Open Text Editor to the Side",
+        "category": "TeX Visual",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "texVisual.editAsText",
+        "title": "Switch Back to Text Editor",
+        "category": "TeX Visual",
+        "icon": "$(file-code)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "texVisual.openToSide",
+          "when": "resourceExtname == .tex && !activeCustomEditorId && !isInDiffEditor",
+          "group": "navigation@-10"
+        },
+        {
+          "command": "texVisual.toggleSource",
+          "when": "activeCustomEditorId == 'texVisual.editor'",
+          "group": "navigation@-12"
+        },
+        {
+          "command": "texVisual.showSource",
+          "when": "activeCustomEditorId == 'texVisual.editor'",
+          "group": "navigation@-11"
+        },
+        {
+          "command": "texVisual.editAsText",
+          "when": "activeCustomEditorId == 'texVisual.editor'",
+          "group": "navigation@-10"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "texVisual.open",
+          "when": "resourceExtname == .tex"
+        },
+        {
+          "command": "texVisual.openToSide",
+          "when": "resourceExtname == .tex"
+        },
+        {
+          "command": "texVisual.toggleSource",
+          "when": "activeCustomEditorId == 'texVisual.editor'"
+        },
+        {
+          "command": "texVisual.togglePreamble",
+          "when": "activeCustomEditorId == 'texVisual.editor'"
+        },
+        {
+          "command": "texVisual.showSource",
+          "when": "activeCustomEditorId == 'texVisual.editor'"
+        },
+        {
+          "command": "texVisual.editAsText",
+          "when": "activeCustomEditorId == 'texVisual.editor'"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "texVisual.open",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "editorTextFocus && resourceExtname == .tex && !activeCustomEditorId"
+      },
+      {
+        "command": "texVisual.openToSide",
+        "key": "ctrl+k v",
+        "mac": "cmd+k v",
+        "when": "editorTextFocus && resourceExtname == .tex && !activeCustomEditorId"
+      },
+      {
+        "command": "texVisual.editAsText",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "activeCustomEditorId == 'texVisual.editor'"
+      }
+    ],
+    "configuration": {
+      "title": "TeX Visual",
+      "properties": {
+        "texVisual.fontSize": {
+          "type": "number",
+          "default": 16,
+          "minimum": 8,
+          "maximum": 40,
+          "description": "Body font size of the visual editor, in pixels."
+        },
+        "texVisual.fontFamily": {
+          "type": "string",
+          "default": "",
+          "description": "CSS font-family for body text. Empty uses Charter / Palatino / Georgia."
+        },
+        "texVisual.maxWidth": {
+          "type": "number",
+          "default": 46,
+          "minimum": 20,
+          "maximum": 200,
+          "description": "Maximum width of the text column, in rem."
+        },
+        "texVisual.followCursor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the visual editor and a text editor showing the same file scrolled to the same place."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/legacy-modes": "^6.4.0",
+    "@codemirror/search": "^6.5.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@lezer/highlight": "^1.2.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.25.0",
+    "katex": "^0.16.11",
+    "pdfjs-dist": "^4.10.38",
+    "puppeteer-core": "^24.0.0"
+  }
+}

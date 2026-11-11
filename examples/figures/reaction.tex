@@ -1,0 +1,19 @@
+% Source of reaction.pdf (best-response curves for the demo). Build: pdflatex reaction.tex
+\documentclass[tikz,border=4pt]{standalone}
+\usepackage{amsmath}
+\begin{document}
+\begin{tikzpicture}[scale=0.8, >=stealth, font=\small]
+  \draw[->] (0,0) -- (9,0) node[right] {$q_1$};
+  \draw[->] (0,0) -- (0,9) node[above] {$q_2$};
+  \draw[very thick, blue!70!black] (4,0) -- (0,8) node[pos=0.8, right=3pt] {$\mathrm{BR}_1(q_2)$};
+  \draw[very thick, red!75!black] (0,4) -- (8,0) node[pos=0.75, above right] {$\mathrm{BR}_2(q_1)$};
+  \draw[dashed, gray] (2.667,0) -- (2.667,2.667) -- (0,2.667);
+  \fill (2.667,2.667) circle (2.6pt);
+  \node[below] at (2.667,0) {$q^{*}$};
+  \node[left] at (0,2.667) {$q^{*}$};
+  \node[below] at (4,0) {$\tfrac{a-c}{2b}$};
+  \node[below] at (8,0) {$\tfrac{a-c}{b}$};
+  \node[left] at (0,4) {$\tfrac{a-c}{2b}$};
+  \node[left] at (0,8) {$\tfrac{a-c}{b}$};
+\end{tikzpicture}
+\end{document}
