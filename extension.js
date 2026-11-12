@@ -4,9 +4,9 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const project = require('./lib/project');
 
 const VIEW_TYPE = 'texVisual.editor';
-const fsp = fs.promises;
 
 function activate(context) {
   const provider = new TexVisualProvider(context);
@@ -68,164 +68,15 @@ function normOffset(document, pos) {
   return document.eol === vscode.EndOfLine.CRLF ? off - pos.line : off;
 }
 
-// ---------------------------------------------------------------- project files (aux, bib, root preamble)
+// ---------------------------------------------------------------- project files (aux, bib, inputs, root preamble)
 
-async function readSmall(file, limit = 4 * 1024 * 1024) {
-  try {
-    const st = await fsp.stat(file);
-    if (!st.isFile() || st.size > limit) return null;
-    return await fsp.readFile(file, 'utf8');
-  } catch (e) { return null; }
-}
-
-function parseAux(text, out) {
-  const re = /\\newlabel\{([^{}]+)\}\{\{((?:[^{}]|\{[^{}]*\})*)\}/g;
-  let m;
-  while ((m = re.exec(text))) {
-    if (m[1].endsWith('@cref')) continue;
-    out[m[1]] = m[2].replace(/[{}]/g, '').replace(/\\[a-zA-Z]+\s*/g, '').trim();
-  }
-}
-
-function bibField(body, name) {
-  const m = new RegExp('(?:^|[\\s,])' + name + '\\s*=\\s*', 'i').exec(body);
-  if (!m) return null;
-  let i = m.index + m[0].length;
-  const c = body[i];
-  if (c === '{' || c === '"') {
-    let depth = 0;
-    for (let j = i; j < body.length; j++) {
-      const ch = body[j];
-      if (ch === '\\') { j++; continue; }
-      if (ch === '{') depth++;
-      else if (ch === '}') { depth--; if (depth === 0 && c === '{') return body.slice(i + 1, j); }
-      else if (ch === '"' && c === '"' && j > i && depth === 0) return body.slice(i + 1, j);
-    }
-    return null;
-  }
-  const bare = /^[\w.-]+/.exec(body.slice(i));
-  return bare ? bare[0] : null;
-}
-
-function lastName(n) {
-  n = n.trim();
-  if (n.startsWith('{') && n.endsWith('}')) return n.slice(1, -1);
-  if (n.includes(',')) return n.split(',')[0].trim();
-  const parts = n.split(' ');
-  let i = parts.length - 1;
-  while (i > 0 && /^[a-z]/.test(parts[i - 1])) i--;
-  return parts.slice(i).join(' ');
-}
-
-function formatAuthors(a) {
-  if (!a) return '';
-  const names = a.replace(/\s+/g, ' ').split(/ and /i).map(lastName).filter(Boolean);
-  if (names.length === 0) return '';
-  if (names.length === 1) return names[0];
-  if (names.length === 2) return names[0] + ' and ' + names[1];
-  return names[0] + ' et al.';
-}
-
-function parseBib(text, out) {
-  const re = /@(\w+)\s*\{\s*([^,\s{}]+)\s*,/g;
-  const starts = [];
-  let m;
-  while ((m = re.exec(text))) starts.push({ type: m[1].toLowerCase(), key: m[2], at: re.lastIndex, head: m.index });
-  for (let i = 0; i < starts.length; i++) {
-    const s = starts[i];
-    if (s.type === 'comment' || s.type === 'string' || s.type === 'preamble') continue;
-    const body = text.slice(s.at, i + 1 < starts.length ? starts[i + 1].head : text.length);
-    const author = bibField(body, 'author') || bibField(body, 'editor') || bibField(body, 'institution') || bibField(body, 'organization');
-    let year = bibField(body, 'year') || '';
-    if (!year) { const d = bibField(body, 'date'); if (d) year = (/\d{4}/.exec(d) || [''])[0]; }
-    out[s.key] = { a: formatAuthors(author), y: String(year).trim() };
-  }
-}
-
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const stripComments = (s) => s.replace(/(^|[^\\])%.*$/gm, '$1');
-
-async function findRoot(file, text) {
-  if (/\\documentclass/.test(text) && /\\begin\{document\}/.test(text)) return null;
-  const dir = path.dirname(file);
-  const magic = /^\s*%\s*!\s*TEX\s+root\s*=\s*(.+?)\s*$/mi.exec(text);
-  if (magic) {
-    const p = path.resolve(dir, magic[1]);
-    if (fs.existsSync(p)) return p;
-  }
-  const base = escapeRe(path.basename(file).replace(/\.tex$/i, ''));
-  const ref = new RegExp('\\\\(?:input|include|subfile)\\s*\\{[^}]*' + base + '(?:\\.tex)?\\s*\\}');
-  for (const d of [dir, path.dirname(dir), path.dirname(path.dirname(dir))]) {
-    let names;
-    try { names = await fsp.readdir(d); } catch (e) { continue; }
-    for (const n of names) {
-      if (!/\.tex$/i.test(n)) continue;
-      const p = path.join(d, n);
-      if (p === file) continue;
-      const t = await readSmall(p, 2 * 1024 * 1024);
-      if (t && /\\documentclass/.test(t) && ref.test(stripComments(t))) return p;
-    }
-  }
-  return null;
-}
-
-async function gatherExternal(document) {
-  const file = document.uri.fsPath;
-  const text = document.getText();
-  const dir = path.dirname(file);
-  const rootFile = await findRoot(file, text);
-  const rootDir = rootFile ? path.dirname(rootFile) : dir;
-  const rootText = rootFile ? await readSmall(rootFile) : null;
-
-  // Preamble of the root file (for sub-files) plus anything the preamble \input's.
-  let preamble = '';
-  const own = rootText != null ? rootText : text;
-  const d = own.search(/\\begin\{document\}/);
-  const head = stripComments(d >= 0 ? own.slice(0, d) : rootText != null ? own : '');
-  if (rootText != null) preamble += head + '\n';
-  for (const m of head.matchAll(/\\(?:input|include)\s*\{([^{}]+)\}/g)) {
-    const p = path.resolve(rootDir, m[1].trim());
-    const t = (await readSmall(p)) || (await readSmall(p + '.tex'));
-    if (t) preamble += t + '\n';
-  }
-
-  // Labels from .aux files (fallback for references this file does not define itself).
-  const aux = {};
-  const auxDirs = new Set([dir, rootDir]);
+function gatherExternal(document) {
   let outDir = vscode.workspace.getConfiguration('latex-workshop', document.uri).get('latex.outDir');
   if (typeof outDir === 'string' && outDir && outDir !== '%DIR%') {
-    outDir = outDir.replace(/%DIR%/g, rootDir).replace(/%WORKSPACE_FOLDER%/g, (vscode.workspace.getWorkspaceFolder(document.uri) || { uri: { fsPath: rootDir } }).uri.fsPath);
-    auxDirs.add(path.resolve(rootDir, outDir));
-  }
-  const mainAux = path.basename(rootFile || file).replace(/\.tex$/i, '') + '.aux';
-  for (const ad of auxDirs) {
-    let names;
-    try { names = (await fsp.readdir(ad)).filter((n) => n.endsWith('.aux')); } catch (e) { continue; }
-    names.sort((a, b) => (a === mainAux) - (b === mainAux));
-    for (const n of names.slice(-40)) {
-      const t = await readSmall(path.join(ad, n));
-      if (t) parseAux(t, aux);
-    }
-  }
-
-  // Bibliography databases.
-  const bib = {};
-  const all = stripComments(text) + '\n' + (rootText ? stripComments(rootText) : '') + '\n' + preamble;
-  const seen = new Set();
-  for (const m of all.matchAll(/\\(?:bibliography|addbibresource|addglobalbib)\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/g)) {
-    for (let name of m[1].split(',')) {
-      name = name.trim();
-      if (!name) continue;
-      for (const base of [rootDir, dir]) {
-        const p = path.resolve(base, /\.bib$/i.test(name) ? name : name + '.bib');
-        if (seen.has(p)) continue;
-        seen.add(p);
-        const t = await readSmall(p, 16 * 1024 * 1024);
-        if (t) parseBib(t, bib);
-      }
-    }
-  }
-  return { aux, bib, rootPreamble: preamble };
+    const ws = vscode.workspace.getWorkspaceFolder(document.uri);
+    outDir = outDir.replace(/%DIR%/g, '.').replace(/%WORKSPACE_FOLDER%/g, ws ? ws.uri.fsPath : '.');
+  } else outDir = null;
+  return project.gatherExternal(document.uri.fsPath, document.getText(), { outDir });
 }
 
 // ---------------------------------------------------------------- provider
@@ -276,10 +127,10 @@ class TexVisualProvider {
 
     if (document.uri.scheme === 'file') {
       const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(docDir, '**/*.{aux,bib,pdf,png,jpg,jpeg,svg}'));
+        new vscode.RelativePattern(docDir, '**/*.{aux,bib,tex,pdf,png,jpg,jpeg,svg}'));
       const onFile = (uri) => {
         const rel = path.relative(docDir.fsPath, uri.fsPath).split(path.sep).join('/');
-        if (/\.(aux|bib)$/i.test(rel)) this.scheduleRefresh(st, 400);
+        if (/\.(aux|bib|tex)$/i.test(rel)) this.scheduleRefresh(st, 400);
         else {
           st.changedAssets.add(rel);
           if (st.assetTimer) clearTimeout(st.assetTimer);
@@ -337,7 +188,7 @@ class TexVisualProvider {
         panel.webview.postMessage({
           type: 'init', text: normText(document), version: document.version, cursor,
           baseUri: panel.webview.asWebviewUri(vscode.Uri.joinPath(document.uri, '..')).toString(),
-          aux: {}, bib: {}, rootPreamble: '',
+          aux: {}, bib: {}, rootPreamble: '', inputs: {},
         });
         this.scheduleRefresh(st, 0);
         break;

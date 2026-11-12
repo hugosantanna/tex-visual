@@ -2,7 +2,7 @@
   "name": "tex-visual",
   "displayName": "TeX Visual",
   "description": "Overleaf-style visual editor for LaTeX: math, headings, references, tables and figures render in place while you edit the .tex source.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "hugosantanna",
   "private": true,
   "license": "MIT",
@@ -38,7 +38,7 @@
     "package": "node build.mjs && vsce package --no-dependencies -o tex-visual.vsix",
     "install-local": "npm run package && code --install-extension tex-visual.vsix --force",
     "pretest": "node build.mjs",
-    "test": "node --test test/scan.test.mjs && node test/shot.mjs examples/demo.tex .shots test/demo.scenario.mjs && node test/shot.mjs examples/demo.tex .shots test/fuzz.scenario.mjs",
+    "test": "node --test test/scan.test.mjs && node test/shot.mjs examples/demo.tex .shots test/demo.scenario.mjs && node test/shot.mjs examples/paper.tex .shots test/paper.scenario.mjs && node test/shot.mjs examples/demo.tex .shots test/fuzz.scenario.mjs && node test/shot.mjs examples/paper.tex .shots test/fuzz.scenario.mjs",
     "test:e2e": "bash test/e2e/run.sh"
   },
   "contributes": {

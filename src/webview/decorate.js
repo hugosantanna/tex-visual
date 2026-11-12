@@ -2,13 +2,13 @@
 // reference chips, tables, list bullets. Anything the cursor touches falls back to source.
 import { Decoration, WidgetType, EditorView, showTooltip } from '@codemirror/view';
 import { StateField, StateEffect } from '@codemirror/state';
-import { scan, number, LIST_ENVS, HIDE } from './latex.js';
-import { renderMath, texToHtml, tabularHtml, titleHtml, setMacros, esc, withGlue, isMathError } from './render.js';
+import { scan, number, LIST_ENVS, HIDE, HIDE_RAW, FLOATS, SUBFLOATS } from './latex.js';
+import { renderMath, texToHtml, tabularHtml, titleHtml, inputHtml, referencesHtml, macroHtml, setMacros, esc, withGlue, isMathError } from './render.js';
 import { FigureWidget } from './figures.js';
 
 // ------------------------------------------------------------------ state
 
-export const setExternal = StateEffect.define();   // { aux, bib, rootPreamble, baseUri }
+export const setExternal = StateEffect.define();   // { aux, bib, rootPreamble, inputs, baseUri }
 export const setMode = StateEffect.define();       // { source?, preambleOpen? }
 export const assetsChanged = StateEffect.define();
 export const setFocus = StateEffect.define();
@@ -24,7 +24,7 @@ export const focusField = StateField.define({
 });
 
 export const externalField = StateField.define({
-  create: () => ({ aux: {}, bib: {}, rootPreamble: '', baseUri: '', gen: 0, assetGen: 0 }),
+  create: () => ({ aux: {}, bib: {}, rootPreamble: '', inputs: {}, baseUri: '', gen: 0, assetGen: 0 }),
   update(v, tr) {
     for (const e of tr.effects) {
       if (e.is(setExternal)) v = Object.assign({}, v, e.value, { gen: v.gen + 1 });
@@ -46,7 +46,7 @@ function parse(state) {
   const text = state.doc.toString();
   const ext = state.field(externalField);
   const sc = scan(text, { rootPreamble: ext.rootPreamble });
-  const num = number(text, sc);
+  const num = number(text, sc, ext.inputs || {});
   setMacros(sc.meta.defs);
   const ctx = makeCtx(sc, num, ext);
   return { sc, num, ctx };
@@ -88,7 +88,12 @@ function makeCtx(sc, num, ext) {
         if (t.name === 'cref' || t.name === 'Cref' || t.name === 'autoref') {
           let nm = l && l.name;
           if (!nm) return txt;
-          if (t.name === 'cref') nm = CREF_SHORT[nm] || nm.toLowerCase();
+          // \\crefname{table}{Table}{Tables} in the preamble wins over cleveref's defaults
+          const type = l.kind === 'eq' ? 'equation' : l.kind === 'sec' ? nm.toLowerCase() : l.kind === 'thm' ? nm.toLowerCase() : l.kind;
+          const own = sc.meta.crefNames[type];
+          const cap = (s, up) => (s ? (up ? s[0].toUpperCase() : s[0].toLowerCase()) + s.slice(1) : s);
+          if (own && t.name !== 'autoref') nm = t.name === 'Cref' ? (own.C || cap(own.c, true)) : (own.c || cap(own.C, false));
+          else if (t.name === 'cref') nm = CREF_SHORT[nm] || nm.toLowerCase();
           return nm + ' ' + (l.kind === 'eq' && t.name !== 'autoref' ? '(' + txt + ')' : txt);
         }
         return String(txt);
@@ -121,9 +126,21 @@ function makeCtx(sc, num, ext) {
       return { html, missing };
     },
     citeText: (t) => ctx.citeInfo(t).html.replace(/<[^>]+>/g, ''),
+    /** The list \\bibliography / \\printbibliography prints: the cited entries of the .bib files. */
+    referencesHtml() {
+      const keys = num.cited;                     // also the \\cite's in files the document \\input's
+      const all = keys.has('*');
+      const entries = [];
+      for (const k of all ? Object.keys(ext.bib) : keys) if (ext.bib[k] && ext.bib[k].r) entries.push({ key: k, r: ext.bib[k].r });
+      if (!entries.length) return null;
+      const sig = ext.gen + '|' + entries.map((e) => e.key).join(',');
+      if (refsCache.sig !== sig) { refsCache.sig = sig; refsCache.html = referencesHtml(entries, { meta: sc.meta }); }
+      return refsCache.html;
+    },
   };
   return ctx;
 }
+const refsCache = { sig: null, html: null };
 
 // ------------------------------------------------------------------ widgets
 
@@ -172,14 +189,55 @@ class PreambleWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+/** Subfigures of one float, side by side. */
+class SubRowWidget extends WidgetType {
+  constructor(items) {
+    super();
+    this.items = items;
+    this.key = items.map((it) => [it.fig.key, it.caption, it.width].join('~')).join('||');
+  }
+  eq(o) { return o.key === this.key; }
+  toDOM(view) {
+    const el = document.createElement('div');
+    el.className = 'tv-subrow';
+    for (const it of this.items) {
+      const cell = document.createElement('div');
+      cell.className = 'tv-subcell';
+      cell.style.flexBasis = it.width + '%';
+      cell.appendChild(it.fig.toDOM(view));
+      if (it.caption) {
+        const c = document.createElement('div');
+        c.className = 'tv-subcaption';
+        c.innerHTML = it.caption;
+        cell.appendChild(c);
+      }
+      el.appendChild(cell);
+    }
+    return el;
+  }
+  get estimatedHeight() { return 260; }
+  ignoreEvent() { return false; }
+}
+
 // ------------------------------------------------------------------ builder
 
 const LAYOUT_ENVS = new Set([
   'figure', 'figure*', 'table', 'table*', 'center', 'flushleft', 'flushright', 'quote', 'quotation',
   'minipage', 'subfigure', 'subtable', 'spacing', 'singlespace', 'landscape', 'sidewaystable',
   'sidewaysfigure', 'threeparttable', 'titlepage', 'small', 'footnotesize', 'frame',
+  'sidewaystable*', 'sidewaysfigure*', 'wrapfigure', 'wraptable', 'adjustbox', 'adjustwidth',
+  'doublespace', 'onehalfspace', 'singlespacing', 'onehalfspacing', 'doublespacing', 'multicols',
+  'scriptsize', 'tiny', 'large', 'Large', 'normalsize', 'samepage', 'appendices', 'refsection',
+  'threeparttablex', 'measuredfigure', 'subappendices', 'raggedright', 'sloppypar', 'appendix', 'justify',
 ]);
-const CENTERED = new Set(['figure', 'figure*', 'table', 'table*', 'center']);
+const CENTERED = new Set([
+  'figure', 'figure*', 'table', 'table*', 'center', 'sidewaystable', 'sidewaysfigure',
+  'sidewaystable*', 'sidewaysfigure*', 'titlepage',
+]);
+// \\renewcommand targets that only steer numbering or spacing: hidden like other layout commands.
+const LAYOUT_MACRO = /^\\(the[A-Za-z]+|arraystretch|baselinestretch|tabcolsep|headrulewidth|footrulewidth)$/;
+const FONT_SIZE = { tiny: 0.5, scriptsize: 0.7, footnotesize: 0.8, small: 0.9, normalsize: 1, large: 1.2, Large: 1.44 };
+const LONG_CAPTION = 110; // characters; longer captions are set flush left like TeX's multi-line ones
 const STYLE_CLASS = {
   em: 'tv-em', b: 'tv-b', sc: 'tv-sc', tt: 'tv-tt', u: 'tv-u', rm: 'tv-rm', sf: 'tv-sf',
   fn: 'tv-fn', caption: 'tv-caption-text', href: 'tv-link', sup: 'tv-sup', sub: 'tv-sub',
@@ -195,6 +253,7 @@ function envKind(name, tok) {
   if (tok && tok.thm) return 'thm';
   if (LIST_ENVS.has(name)) return 'list';
   if (LAYOUT_ENVS.has(name)) return 'layout';
+  if (name === 'tablenotes') return 'notes';
   if (name === 'abstract') return 'abstract';
   if (name === 'thebibliography') return 'bib';
   return 'other';
@@ -224,7 +283,8 @@ function build(state) {
   };
   const mark = (from, to, cls) => { if (to > from) marks.push(markDeco(cls).range(from, to)); };
   const rep = (from, to, deco) => { reps.push({ from, to, deco }); };
-  const hide = (from, to) => { if (to > from) rep(from, to, HIDE_INLINE); };
+  const hidden = [];         // inline-hidden ranges, to collapse lines that show nothing at all
+  const hide = (from, to) => { if (to > from) { rep(from, to, HIDE_INLINE); hidden.push({ from, to }); } };
   const widget = (from, to, w, block) => rep(from, to, Decoration.replace({ widget: w, block: !!block }));
   const lineInfo = (from) => {
     let li = lines.get(from);
@@ -250,6 +310,33 @@ function build(state) {
   const listDepthAt = (pos) => listRanges.reduce((d, r) => d + (pos > r[0] && pos < r[1] ? 1 : 0), 0);
   const ctxClass = (pos) => (inThm(pos) ? ' tv-in-thm' : '');
   const ctxAttrs = (pos) => { const d = listDepthAt(pos); return d ? { style: `--tv-indent:${d}` } : null; };
+  const floatRanges = sc.envs.filter((e) => FLOATS[e.name]).map((e) => [e.from, e.to]);
+  const hasMaketitle = sc.tokens.some((t) => t.type === 'maketitle');   // only then is \\title{…} shown elsewhere
+  const inFloat = (pos) => floatRanges.some((r) => pos > r[0] && pos < r[1]);
+  const firstTokenAt = (pos) => {       // index of the first token starting at or after pos
+    let lo = 0, hi = sc.tokens.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (sc.tokens[mid].from < pos) lo = mid + 1; else hi = mid; }
+    return lo;
+  };
+  const sizeAt = (pos) => {             // \\small, \\scriptsize… in force where a table starts
+    const r = floatRanges.find((x) => pos > x[0] && pos < x[1]);
+    if (!r) return null;
+    let fs = null;
+    for (let k = firstTokenAt(r[0]); k < sc.tokens.length && sc.tokens[k].from < pos; k++) {
+      const u = sc.tokens[k];
+      if (u.type === 'cs' && FONT_SIZE[u.name] != null) fs = FONT_SIZE[u.name];
+    }
+    return fs && fs !== 1 ? { style: `--tv-fs:${fs}` } : null;
+  };
+  const cachedTable = (key, make) => {
+    let html = tableCache.get(key);
+    if (html === undefined) {
+      html = make();
+      if (tableCache.size > 200) tableCache.clear();
+      tableCache.set(key, html);
+    }
+    return html;
+  };
 
   // ---- preamble
   if (sc.bodyFrom > 0) {
@@ -321,20 +408,21 @@ function build(state) {
       case 'tabular': {
         skip = t.to;
         const src = doc.sliceString(t.from, t.to);
-        let html = tableCache.get(src);
-        if (html === undefined) {
-          html = tabularHtml(src, ctx);
-          if (tableCache.size > 200) tableCache.clear();
-          tableCache.set(src, html);
-        }
+        const html = cachedTable(src, () => tabularHtml(src, ctx));
         const o = own(t.from, t.to);
-        if (!html || !o) { eachLine(t.from, t.to, (l) => addLine(l.from, 'tv-src-line')); break; }
+        if (!html) { eachLine(t.from, t.to, (l) => addLine(l.from, 'tv-src-line')); break; }
+        if (!o) { // shares its line with other material (a panel heading, a box around it): draw it in place
+          if (touch(t.from, t.to)) mark(t.from, t.to, 'tv-src');
+          else widget(t.from, t.to, new HtmlWidget(html, 'tv-tablewrap tv-table-inline', 'span', -1, sizeAt(t.from)));
+          break;
+        }
+        const fsAttrs = sizeAt(t.from);
         const est = 30 + src.split('\\\\').length * 26;
         if (!touch(t.from, t.to)) {
-          widget(o.from, o.to, new HtmlWidget(html, 'tv-tablewrap', 'div', est), true);
+          widget(o.from, o.to, new HtmlWidget(html, 'tv-tablewrap', 'div', est, fsAttrs), true);
         } else {
           eachLine(t.from, t.to, (l) => addLine(l.from, 'tv-src-line'));
-          rep(o.to, o.to, Decoration.widget({ widget: new HtmlWidget(html, 'tv-tablewrap tv-preview', 'div', est), block: true, side: 1 }));
+          rep(o.to, o.to, Decoration.widget({ widget: new HtmlWidget(html, 'tv-tablewrap tv-preview', 'div', est, fsAttrs), block: true, side: 1 }));
         }
         break;
       }
@@ -365,12 +453,18 @@ function build(state) {
         const rev = touch(t.from, t.to);
         const cls = STYLE_CLASS[t.kind];
         if (cls) mark(t.inner.from, t.inner.to, cls);
-        if (t.kind === 'caption') eachLine(t.from, t.to, (l) => addLine(l.from, 'tv-caption'));
+        if (t.kind === 'caption') {
+          const cls = 'tv-caption' + (t.inner.to - t.inner.from > LONG_CAPTION ? ' tv-caption-long' : '');
+          eachLine(t.from, t.to, (l) => addLine(l.from, cls));
+        } else if (t.kind === 'notes' && inFloat(t.from)) {
+          eachLine(t.inner.from, t.inner.to, (l) => addLine(l.from, 'tv-notes'));
+        }
         if (rev) {
           mark(t.open.from, t.open.to, 'tv-cs');
           mark(t.close.from, t.close.to, 'tv-cs');
         } else {
           if (t.kind === 'caption' && t.num) widget(t.open.from, t.open.to, new HtmlWidget(`${t.floatName} ${esc(t.num)}:&nbsp;`, 'tv-caption-label'));
+          else if (t.kind === 'caption' && t.sub) widget(t.open.from, t.open.to, new HtmlWidget(`${esc(t.sub)}&nbsp;`, 'tv-caption-label tv-subcaption-label'));
           else if (t.kind === 'fn') widget(t.open.from, t.open.to, new HtmlWidget('note', 'tv-fn-mark'));
           else hide(t.open.from, t.open.to);
           hide(t.close.from, t.close.to);
@@ -398,8 +492,28 @@ function build(state) {
         break;
       }
       case 'input': {
-        if (touch(t.from, t.to)) mark(t.from, t.to, 'tv-src');
-        else widget(t.from, t.to, new HtmlWidget('↳ ' + esc(t.path), 'tv-input', 'span', -1, { 'data-input': t.path, title: '⌘-click to open' }));
+        const src = ext.inputs ? ext.inputs[t.path] : null;
+        // the numbers its captions took are part of what is drawn
+        const nums = t.sub ? t.sub.tokens.filter((u) => u.num && u.kind === 'caption').map((u) => u.num).join(',') : '';
+        const html = src != null ? cachedTable(`\\input ${nums} ${src}`, () => inputHtml(src, ctx, t.sub)) : null;
+        const rev = touch(t.from, t.to);
+        if (!html) {
+          if (rev) mark(t.from, t.to, 'tv-src');
+          else widget(t.from, t.to, new HtmlWidget('↳ ' + esc(t.path), 'tv-input', 'span', -1, { 'data-input': t.path, title: '⌘-click to open' }));
+          break;
+        }
+        const attrs = Object.assign({ 'data-input': t.path, title: `\\input{${t.path}} — ⌘-click to open the file` }, sizeAt(t.from));
+        const o = own(t.from, t.to);
+        const est = 30 + src.split('\\\\').length * 26;
+        if (!o) {
+          if (rev) mark(t.from, t.to, 'tv-src');
+          else widget(t.from, t.to, new HtmlWidget(html, 'tv-tablewrap tv-table-inline', 'span', -1, attrs));
+        } else if (!rev) {
+          widget(o.from, o.to, new HtmlWidget(html, 'tv-tablewrap', 'div', est, attrs), true);
+        } else {
+          mark(t.from, t.to, 'tv-src');
+          rep(o.to, o.to, Decoration.widget({ widget: new HtmlWidget(html, 'tv-tablewrap tv-preview', 'div', est, attrs), block: true, side: 1 }));
+        }
         break;
       }
       case 'url': {
@@ -411,6 +525,13 @@ function build(state) {
       case 'item': {
         const l = doc.lineAt(t.from);
         const lead = /^\s*$/.test(doc.sliceString(l.from, t.from)) ? l.from : t.from;
+        if (t.notes) {
+          if (touch(lead, t.to)) { mark(t.from, t.to, 'tv-cs'); break; }
+          const to = next(t.to) === ' ' ? t.to + 1 : t.to;
+          if (t.custom) widget(lead, to, new HtmlWidget(texToHtml(t.label, ctx), 'tv-note-mark'));
+          else hide(lead, to);
+          break;
+        }
         if (lead === l.from) addLine(l.from, 'tv-li-first');
         if (touch(lead, t.to)) { mark(t.from, t.to, 'tv-cs'); break; }
         const to = next(t.to) === ' ' ? t.to + 1 : t.to;
@@ -502,6 +623,15 @@ function build(state) {
       }
 
       case 'cs': {
+        if (!t.br && !HIDE.has(t.name)) {
+          // a macro the document defines for running text shows what it stands for
+          const html = touch(t.from, t.to) ? null : macroHtml(t.name, ctx);
+          if (html) {
+            const to = doc.sliceString(t.to, t.to + 2) === '{}' ? t.to + 2 : t.to;
+            widget(t.from, to, new HtmlWidget(html, 'tv-macro', 'span', -1, { title: '\\' + t.name }));
+            break;
+          }
+        }
         if (t.br || !HIDE.has(t.name)) { mark(t.from, t.to, 'tv-cs'); break; }
         const o = own(t.from, t.to);
         if (touch(o ? o.from : t.from, o ? o.to : t.to)) mark(t.from, t.to, 'tv-cs');
@@ -510,7 +640,29 @@ function build(state) {
         break;
       }
 
-      case 'raw': mark(t.from, t.to, 'tv-cs'); break;
+      case 'raw': {
+        if (t.name === 'bibliography' || t.name === 'printbibliography') {
+          const o = own(t.from, t.to);
+          const html = o ? ctx.referencesHtml() : null;
+          if (!html) { mark(t.from, t.to, 'tv-cs'); break; }
+          const est = 60 + (html.split('tv-refs-entry').length - 1) * 52;
+          if (!touch(o.from, o.to)) widget(o.from, o.to, new HtmlWidget(html, 'tv-refs', 'div', est), true);
+          else {
+            mark(t.from, t.to, 'tv-cs');
+            rep(o.to, o.to, Decoration.widget({ widget: new HtmlWidget(html, 'tv-refs tv-preview', 'div', est), block: true, side: 1 }));
+          }
+          break;
+        }
+        const layout = HIDE_RAW.has(t.name) || (t.titlemeta && hasMaketitle) ||
+          (t.name === 'renewcommand' && t.target != null && LAYOUT_MACRO.test(t.target));
+        if (!layout) { mark(t.from, t.to, 'tv-cs'); break; }
+        const o = own(t.from, t.to);
+        if (touch(o ? o.from : t.from, o ? o.to : t.to)) mark(t.from, t.to, 'tv-cs');
+        else if (o) rep(o.from, o.to, HIDE_BLOCK);
+        else if (t.name === 'hspace' || t.name === 'hskip') widget(t.from, t.to, new HtmlWidget(' ', 'tv-sym'));
+        else hide(t.from, t.to);
+        break;
+      }
 
       case 'enddoc': {
         eachLine(t.from, doc.length, (l) => addLine(l.from, 'tv-pre'));
@@ -532,11 +684,40 @@ function build(state) {
       eachLine(e.from, e.to, (l) => addLine(l.from, 'tv-abstract'));
     } else if (kind === 'bib') {
       eachLine(e.from, e.to, (l) => addLine(l.from, 'tv-bib'));
+    } else if (kind === 'notes') {
+      eachLine(e.from, e.to, (l) => addLine(l.from, 'tv-notes'));
     } else if (CENTERED.has(e.name)) {
       eachLine(e.from, e.to, (l) => addLine(l.from, 'tv-center'));
     } else if (e.name === 'quote' || e.name === 'quotation') {
       eachLine(e.from, e.to, (l) => addLine(l.from, 'tv-quote'));
     }
+  }
+
+  // ---- subfigures: one row of images with their (a), (b) captions, unless the cursor is inside
+  for (const e of sc.envs) {
+    if (!FLOATS[e.name]) continue;
+    const subs = sc.envs.filter((x) => SUBFLOATS.has(x.name) && x.from > e.from && x.to < e.to);
+    if (subs.length < 2) continue;
+    const items = [];
+    for (const x of subs) {
+      let fig = null, caption = '', n = 0;
+      for (let k = firstTokenAt(x.from); k < sc.tokens.length && sc.tokens[k].from < x.to; k++) {
+        const u = sc.tokens[k];
+        if (u.type === 'graphics') { n++; fig = fig || new FigureWidget(u.path, u.opt, ext.baseUri, sc.meta.graphicsPaths, ext.assetGen, true); }
+        else if (u.type === 'tabular' || u.type === 'math' && u.display) n = 9;
+        else if (u.type === 'style' && u.kind === 'caption' && !caption) {
+          caption = (u.sub ? `<span class="tv-subcaption-label">${esc(u.sub)}</span> ` : '') + texToHtml(doc.sliceString(u.inner.from, u.inner.to), ctx);
+        }
+      }
+      if (n !== 1) { items.length = 0; break; }      // not a plain image per subfigure: leave it as lines
+      const m = /([\d.]*)\s*\\(?:textwidth|linewidth|columnwidth|hsize)/.exec(x.begin.arg || '');
+      const frac = m ? (m[1] === '' ? 1 : parseFloat(m[1])) : 1 / subs.length;
+      items.push({ fig, caption, width: Math.round(Math.min(1, Math.max(0.1, frac)) * 980) / 10 });
+    }
+    if (!items.length) continue;
+    const a = own(subs[0].from, subs[0].begin.to), b = own(subs[subs.length - 1].end.from, subs[subs.length - 1].to);
+    if (!a || !b || touch(a.from, b.to)) continue;
+    widget(a.from, b.to, new SubRowWidget(items), true);
   }
 
   // ---- source indentation means nothing in the rendered view: hide it
@@ -553,6 +734,23 @@ function build(state) {
       if (li && li.cls.some((k) => k === 'tv-src-line' || k === 'tv-pre')) continue;
       if (touch(l.from, l.from + ws - 1)) continue;
       hide(l.from, l.from + ws);
+    }
+  }
+
+  // ---- a line on which everything is hidden takes no room at all
+  if (hidden.length) {
+    hidden.sort((a, b) => a.from - b.from);
+    for (let k = 0; k < hidden.length;) {
+      const l = doc.lineAt(hidden[k].from);
+      let pos = l.from, ok = true, q = k;
+      for (; q < hidden.length && hidden[q].from <= l.to; q++) {
+        const h = hidden[q];
+        if (h.from > pos && /\S/.test(doc.sliceString(pos, h.from))) ok = false;
+        if (h.to > pos) pos = h.to;
+      }
+      if (pos > l.to || /\S/.test(doc.sliceString(pos, l.to))) ok = false;
+      if (ok && !touch(l.from, l.to)) rep(l.from, l.to, HIDE_BLOCK);
+      k = q;
     }
   }
 

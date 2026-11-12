@@ -121,6 +121,7 @@ body { margin: 0; padding: 0 !important; background: var(--tv-bg); color: var(--
 .tv-fn-mark { font-size: 0.62em; vertical-align: super; color: var(--tv-accent); margin: 0 3px 0 1px; font-family: system-ui, sans-serif; }
 .tv-link { color: var(--tv-accent); }
 .tv-sym { white-space: pre; }
+.tv-macro { cursor: text; }
 
 /* ---------- references */
 .tv-ref, .tv-cite { color: var(--tv-accent); cursor: pointer; }
@@ -148,12 +149,35 @@ body { margin: 0; padding: 0 !important; background: var(--tv-bg); color: var(--
 .cm-line.tv-caption { text-align: center; font-size: 0.92em; padding-top: 0.2em; padding-bottom: 0.2em; }
 .tv-caption-label { font-weight: 700; }
 .tv-tablewrap { text-align: center; padding: 0.5em 0; overflow-x: auto; }
-.tv-table { display: inline-table; border-collapse: collapse; font-size: 0.93em; line-height: 1.45; font-variant-numeric: lining-nums tabular-nums; }
-.tv-table td { padding: 0.2em 0.8em; vertical-align: baseline; }
+.tv-table {
+  display: inline-table; border-collapse: collapse; max-width: 100%; line-height: 1.45;
+  font-size: calc(0.93em * var(--tv-fs, 1)); font-variant-numeric: lining-nums tabular-nums;
+}
+/* numbers and headers never break; row labels and p{} columns give way when the table is wide */
+.tv-table td { padding: 0.2em 0.8em; vertical-align: baseline; white-space: nowrap; }
+.tv-table td:first-child, .tv-table td.tv-para { white-space: normal; overflow-wrap: normal; word-break: normal; }
 .tv-table tr.tv-rule-heavy td { border-top: 1.5px solid currentColor; }
 .tv-table tr.tv-rule-light td { border-top: 1px solid var(--tv-rule); }
 .tv-table tr.tv-rule-bottom-heavy td { border-bottom: 1.5px solid currentColor; }
 .tv-table tr.tv-rule-bottom-light td { border-bottom: 1px solid var(--tv-rule); }
+.tv-table-inline { display: inline-block; padding: 0; vertical-align: middle; }
+.tv-input-table + .tv-input-table { padding-top: 0.9em; }
+.tv-input-caption { font-size: 0.92em; padding-bottom: 0.3em; }
+.tv-tablewrap[data-input] { cursor: text; }
+.cm-line.tv-caption-long { text-align: left; }
+.tv-subcaption-label { font-weight: 400; }
+.cm-line.tv-notes { text-align: left; font-size: 0.86em; line-height: 1.5; padding-top: 0.25em; }
+.tv-note-mark { vertical-align: super; font-size: 0.75em; margin-right: 0.15em; }
+.tv-subrow { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: 0.4em 1%; padding: 0.4em 0; }
+.tv-subcell { flex: 0 1 auto; min-width: 0; text-align: center; }
+.tv-subcell .tv-figure { padding: 0.2em 0; }
+.tv-subcaption { font-size: 0.88em; line-height: 1.4; padding: 0.1em 0.4em 0.3em; }
+.tv-refs { padding-bottom: 0.6em; }
+.tv-refs-entry { padding: 0 2px 0.45em calc(6px + 1.6em); text-indent: -1.6em; font-size: 0.93em; line-height: 1.5; }
+.tv-thanks { font-size: 0.6em; vertical-align: super; line-height: 0; margin-left: 1px; }
+.tv-title-notes { padding-top: 1em; text-align: left; font-size: 0.82em; line-height: 1.45; color: var(--tv-dim); }
+.tv-title-note { padding-bottom: 0.25em; }
+.tv-title-note .tv-thanks { margin-right: 0.3em; }
 .tv-figure { text-align: center; padding: 0.5em 0; display: block; }
 span.tv-figure { display: inline-block; padding: 0; }
 .tv-figure img { max-width: 100%; height: auto; border-radius: 2px; background: #fff; }

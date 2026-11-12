@@ -13,6 +13,7 @@ import {
 } from './decorate.js';
 import { LIST_ENVS } from './latex.js';
 import { figureStats, invalidateAssets } from './figures.js';
+import { texComplete } from './complete.js';
 
 const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
 const post = (m) => { if (vscode) vscode.postMessage(m); };
@@ -162,33 +163,6 @@ function smartEnter(v) {
   return false;
 }
 
-function texComplete(context) {
-  const st = context.state;
-  let m = context.matchBefore(/\\(?:eq|c|C|auto|page|name|v)?ref\{[^{}]*$/);
-  if (m) {
-    const { num } = st.field(parseField);
-    const aux = st.field(externalField).aux;
-    const seen = new Set();
-    const options = [];
-    for (const [k, v] of num.labels) { seen.add(k); options.push({ label: k, detail: v.text != null ? `${v.name || ''} ${v.text}`.trim() : '', type: 'variable' }); }
-    for (const k in aux) if (!seen.has(k)) options.push({ label: k, detail: String(aux[k]), type: 'variable' });
-    const from = Math.max(m.text.lastIndexOf('{'), m.text.lastIndexOf(',')) + 1 + m.from;
-    return { from, options, validFor: /^[^{},]*$/ };
-  }
-  m = context.matchBefore(/\\[cC]ite[a-zA-Z]*\*?(?:\[[^\]]*\]){0,2}\{[^{}]*$|\\(?:text|paren|foot|auto)cite\*?(?:\[[^\]]*\]){0,2}\{[^{}]*$/);
-  if (m) {
-    const { num } = st.field(parseField);
-    const bib = st.field(externalField).bib;
-    const options = [];
-    const seen = new Set();
-    for (const k in bib) { seen.add(k); options.push({ label: k, detail: `${bib[k].a} ${bib[k].y}`.replace(/[{}\\~]/g, ' '), type: 'text' }); }
-    for (const [k, v] of num.bibitems) if (!seen.has(k)) options.push({ label: k, detail: v || '', type: 'text' });
-    const from = Math.max(m.text.lastIndexOf('{'), m.text.lastIndexOf(',')) + 1 + m.from;
-    return { from, options, validFor: /^[^{},]*$/ };
-  }
-  return null;
-}
-
 function onMouseDown(e, v) {
   if (!(e.metaKey || e.ctrlKey)) return false;
   const el = e.target instanceof Element ? e.target.closest('[data-key],[data-cite],[data-input]') : null;
@@ -243,7 +217,8 @@ function create(msg) {
       focusField,
       EditorView.focusChangeEffect.of((_s, focusing) => setFocus.of(focusing)),
       externalField.init(() => ({
-        aux: msg.aux || {}, bib: msg.bib || {}, rootPreamble: msg.rootPreamble || '', baseUri: msg.baseUri || '', gen: 0, assetGen: 0,
+        aux: msg.aux || {}, bib: msg.bib || {}, rootPreamble: msg.rootPreamble || '', inputs: msg.inputs || {},
+        baseUri: msg.baseUri || '', gen: 0, assetGen: 0,
       })),
       modeField.init(() => ({ source: !!saved.source, preambleOpen: false })),
       parseField, decoField, mathTip,
@@ -314,6 +289,10 @@ function debugState() {
     refs: [...root.querySelectorAll('.tv-ref')].map((n) => n.textContent),
     cites: [...root.querySelectorAll('.tv-cite')].map((n) => n.textContent),
     figures: root.querySelectorAll('.tv-figure img').length,
+    inputTables: root.querySelectorAll('.tv-tablewrap[data-input] .tv-table').length,
+    references: root.querySelectorAll('.tv-refs-entry').length,
+    inputRows: root.querySelectorAll('.tv-tablewrap[data-input] .tv-table tr').length,
+    captions: [...root.querySelectorAll('.tv-caption-label')].map((n) => n.textContent.trim()),
     figureErrors: [...root.querySelectorAll('.tv-figure .tv-missing')].map((n) => n.textContent),
     figureStats: figureStats(),
     fontsLoaded: document.fonts ? [...document.fonts].filter((f) => f.status === 'loaded' && /KaTeX/.test(f.family)).length : -1,

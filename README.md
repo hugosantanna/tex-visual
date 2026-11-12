@@ -55,8 +55,10 @@ shortcut switches back to the plain text editor.
 | `Enter` after `\begin{env}` | inserts the matching `\end{env}` |
 | `Cmd+F` | search |
 
-There is a demo paper in [`examples/demo.tex`](examples/demo.tex) that exercises everything
-below.
+There are two example papers: [`examples/demo.tex`](examples/demo.tex) (theory: theorems, aligned
+equations, a `thebibliography`) and [`examples/paper.tex`](examples/paper.tex) (applied: tables kept
+in their own files, table notes, subfigures, an appendix, a `.bib` file). Between them they exercise
+everything below.
 
 To make the visual editor the default for `.tex` files, add this to your settings:
 
@@ -71,21 +73,34 @@ To make the visual editor the default for `.tex` files, add this to your setting
   `\DeclarePairedDelimiter` definitions are picked up from the preamble, including the preamble of
   the root file when you are editing an `\input` file.
 - **Numbering.** Sections, equations (per row in `align`), theorem-like environments from
-  `\newtheorem` (shared and section-wise counters included), figures, tables and `enumerate`
-  items are numbered from the file itself. `\ref`, `\eqref`, `\cref` and `\autoref` show those
-  numbers and update the moment you add or move something. Labels defined in other files fall back
-  to the `.aux` file of the last build.
-- **Citations.** `\citet`, `\citep`, `\cite`, `\textcite`, `\parencite` and friends show
-  author–year text, read from your `.bib` files or from `\bibitem` entries.
-- **Structure.** `\title`/`\author`/`\date` at `\maketitle`, `abstract`, sectioning commands,
+  `\newtheorem` (shared and section-wise counters included), figures, subfigures, tables and
+  `enumerate` items are numbered from the source. `\ref`, `\eqref`, `\cref` and `\autoref` show
+  those numbers and update the moment you add or move something. The count follows `\appendix` and
+  `\begin{appendices}`, `\setcounter`, `\numberwithin`, `\renewcommand{\thetable}{A\arabic{table}}`
+  and `\crefname`, and it runs through the files the document `\input`s, so a table or a section
+  kept in another file still takes its number. Labels the editor cannot see fall back to the `.aux`
+  file of the last build.
+- **Citations and references.** `\citet`, `\citep`, `\cite`, `\textcite`, `\parencite` and
+  friends show author–year text, read from your `.bib` files or from `\bibitem` entries.
+  `\bibliography{…}` and `\printbibliography` show the list of cited entries.
+- **Structure.** `\title`/`\author`/`\date` at `\maketitle` (with `\thanks` notes under the
+  block), `abstract`, sectioning commands,
   `\paragraph`, theorem and `proof` environments, `itemize`/`enumerate`/`description`, footnotes,
   `\emph`, `\textbf`, `\texttt`, `\textsc`, `\underline`, `\href`, `\url`.
-- **Floats.** `tabular` (with `booktabs` rules and `\multicolumn`) as a table,
-  `\includegraphics` for PDF, PNG and JPEG files, and numbered captions.
+- **Floats.** `tabular` (with `booktabs` rules, `\multicolumn` and `\multirow`) as a table,
+  `\includegraphics` for PDF, PNG and JPEG files, and numbered captions. A table kept in its own
+  file is drawn where its `\input{tables/…}` stands and redrawn when the file changes on disk.
+  `threeparttable` notes, `\caption*` and `\parbox` notes read as notes, subfigures sit side by
+  side with their (a), (b) captions, and font-size switches such as `\small` in front of a table
+  are honoured.
+- **Your own macros.** Besides math macros, a macro used in running text shows what it stands
+  for: `\newcommand{\nObs}{11,672}` reads as 11,672.
 - **Typography.** `~`, `--`, `---`, TeX quotes, accents such as `\"o` and `\'e`, and escaped
   characters are shown as the characters they produce.
 
-Anything it does not understand is left as source, dimmed.
+Commands that only steer layout (`\centering`, `\vspace{…}`, `\setlength{…}{…}`, `\clearpage`
+and the like) take no room until the cursor reaches them. Anything it does not understand is left
+as source, dimmed.
 
 ## How it works
 
@@ -124,8 +139,13 @@ Colors follow your VS Code theme, light or dark.
   rendered with their default value.
 - TikZ, `verbatim`, listings and algorithm environments stay as source.
 - Tables are rendered read-only; click one to edit its source.
-- LaTeX Workshop's IntelliSense does not reach into the visual editor. Completion there covers
-  `\ref{…}` and `\cite{…}` keys only.
+- LaTeX Workshop's IntelliSense does not reach into the visual editor. It has its own completion:
+  labels after `\ref{`, keys after `\cite{`, environments after `\begin{`, and the common
+  commands and your own macros after a backslash.
+- Numbering is exact for a root file. A file that is itself `\input` into another starts counting
+  at 1; what it does not define comes from the `.aux`.
+- The reference list is formatted author–year whatever the bibliography style, and shows the
+  entries cited in the files it can see.
 - Developed and tested on macOS. Nothing in it is platform-specific, but Windows and Linux have
   had less use; please [open an issue](https://github.com/hugosantanna/tex-visual/issues) if
   something misbehaves.
@@ -142,12 +162,21 @@ npm run install-local      # build, package, and install into your VS Code
 | | |
 |---|---|
 | `npm run build` | bundle the webview into `media/` |
-| `npm test` | scanner unit tests, then a headless-Chrome render of the demo paper and a 1,500-step random-edit fuzz test (needs Chrome, Chromium or Edge; set `CHROME_PATH` if needed) |
+| `npm test` | scanner unit tests (numbers checked against what `pdflatex` writes to the `.aux`), then headless-Chrome renders of both example papers and a 1,500-step random-edit fuzz test on each (needs Chrome, Chromium or Edge; set `CHROME_PATH` if needed) |
 | `npm run test:e2e` | macOS: runs the sync tests inside a throwaway VS Code instance |
 | `node test/shot.mjs paper.tex out/` | screenshot any `.tex` file as the editor would render it |
 
 Releases are cut by pushing a tag: `npm version patch && git push --follow-tags` builds the
 `.vsix` in CI and attaches it to a GitHub release.
+
+## Basil
+
+TeX Visual continues [Basil](https://github.com/hugosantanna/basil), an earlier visual editor for
+LaTeX in VS Code that rendered the document as HTML blocks with click-to-edit text areas. What Basil
+did for real papers (tables from `\input` files, `threeparttable` notes, subfigures, `\thanks`
+footnotes, a formatted reference list, command completion) is here, on an editor where the rendered
+text itself is editable. Its language-model commands and its math previews for the plain text
+editor were not carried over.
 
 ## License
 

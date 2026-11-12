@@ -123,6 +123,31 @@ async function run() {
     check('sub-file: macro from the root preamble', ss && ss.math === 1 && ss.mathErrors === 0, ss && { math: ss.math, mathErrors: ss.mathErrors });
     check('sub-file: label resolved from .aux', ss && ss.refs[0] === '(7)', ss && ss.refs);
     check('sub-file: citations resolved from .bib', ss && ss.cites[0] === 'Knuth (1984)' && ss.cites[1] === '(Able et al., 2020)', ss && ss.cites);
+
+    // a table kept in its own file is drawn in place, numbered, and redrawn when the file changes;
+    // \\bibliography lists the cited entries
+    fs.mkdirSync(path.join(dir, 'tables'), { recursive: true });
+    const tbl = path.join(dir, 'tables', 'one.tex');
+    fs.writeFileSync(tbl, '\\begin{tabular}{lc}\n\\toprule\nA & B \\\\\n\\midrule\n1 & 2 \\\\\n\\bottomrule\n\\end{tabular}\n');
+    const host = path.join(dir, 'host.tex');
+    fs.writeFileSync(host, '\\documentclass{article}\n\\begin{document}\nSee \\citet{knuth1984}.\n\\appendix\n\\renewcommand{\\thetable}{A\\arabic{table}}\n\\begin{table}\n\\caption{One}\n\\input{tables/one}\n\\end{table}\n\n\\bibliography{refs}\n\\end{document}\n');
+    await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(host), 'texVisual.editor');
+    let hs = null;
+    for (let i = 0; i < 30; i++) {
+      await sleep(400);
+      hs = await dbg({ op: 'state' });
+      if (hs && hs.text.startsWith('\\documentclass') && hs.text.includes('tables/one') && hs.inputTables === 1 && hs.references === 1) break;
+    }
+    check('\\input table drawn in place', hs && hs.inputTables === 1, hs && { inputTables: hs.inputTables, errors: hs.errors });
+    check('caption follows \\appendix and \\thetable', hs && hs.captions[0] === 'Table A1:', hs && hs.captions);
+    check('reference list from the .bib file', hs && hs.references === 1, hs && hs.references);
+    fs.writeFileSync(tbl, '\\begin{tabular}{lc}\nA & B \\\\\n1 & 2 \\\\\n3 & 4 \\\\\n\\end{tabular}\n');
+    let rows = 0;
+    for (let i = 0; i < 30 && rows !== 3; i++) {
+      await sleep(400);
+      rows = (await vscode.commands.executeCommand('texVisual._debug', { op: 'state' }) || {}).inputRows || 0;
+    }
+    check('table redrawn when its file changes on disk', rows === 3, rows);
   } catch (e) {
     fatal = String(e && e.stack || e);
   }

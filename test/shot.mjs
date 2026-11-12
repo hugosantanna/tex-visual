@@ -10,6 +10,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const texFile = path.resolve(process.argv[2]);
@@ -17,6 +18,9 @@ const outDir = path.resolve(process.argv[3]);
 const dark = process.argv.includes('--dark');
 const texDir = path.dirname(texFile);
 fs.mkdirSync(outDir, { recursive: true });
+// aux labels, bibliography and \\input tables, gathered exactly as the extension host does
+const project = createRequire(import.meta.url)('../lib/project.js');
+const external = await project.gatherExternal(texFile, fs.readFileSync(texFile, 'utf8'));
 
 const MIME = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.html': 'text/html' };
 const server = http.createServer((req, res) => {
@@ -37,7 +41,7 @@ window.acquireVsCodeApi = () => ({
   postMessage(m) {
     const h = window.__host; h.log.push(m);
     const send = (x) => setTimeout(() => window.postMessage(x, '*'), 5);
-    if (m.type === 'ready') send({ type: 'init', text: h.text, version: h.version, baseUri: '/doc', aux: {}, bib: {} });
+    if (m.type === 'ready') send(Object.assign({ type: 'init', text: h.text, version: h.version, baseUri: '/doc' }, window.__EXT__));
     if (m.type === 'edit') {
       if (m.baseVersion !== h.version) { send({ type: 'reject', seq: m.seq, version: h.version, text: h.text }); return; }
       let t = h.text;
@@ -81,7 +85,7 @@ const logs = [];
 page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 page.on('requestfailed', (r) => logs.push(`[requestfailed] ${r.url()}`));
-await page.evaluateOnNewDocument((t) => { window.__TEX__ = t; }, fs.readFileSync(texFile, 'utf8'));
+await page.evaluateOnNewDocument((t, ext) => { window.__TEX__ = t; window.__EXT__ = ext; }, fs.readFileSync(texFile, 'utf8'), external);
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle0' });
 await page.waitForFunction(() => window.__tv && window.__tv.view, { timeout: 10000 });
 await page.evaluate(() => document.fonts.ready);

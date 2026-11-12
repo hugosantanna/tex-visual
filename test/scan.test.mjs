@@ -83,3 +83,78 @@ test('theorem counters: shared, numbered within sections, starred', () => {
   assert.deepEqual(got, { a: '1.1', b: '1.2', s2: '2', c: '2.1', e: '2.1', it: '2' });
   assert.equal(s2.tokens.find((t) => t.type === 'begin' && t.env === 'claim').num, undefined);
 });
+
+// ---- examples/paper.tex: an applied paper with input tables, subfigures and an appendix.
+// Expected numbers are again what pdflatex writes to paper.aux.
+const paper = fs.readFileSync(new URL('../examples/paper.tex', import.meta.url), 'utf8');
+const psc = scan(paper);
+const pnum = number(paper, psc);
+
+test('paper: floats, subfigures and the appendix are numbered as LaTeX numbers them', () => {
+  const got = Object.fromEntries([...pnum.labels].map(([k, v]) => [k, v.text]));
+  assert.deepEqual(got, {
+    'sec:intro': '1', 'sec:results': '2', 'eq:main': '1', 'tab:main': '1', 'fig:trends_a': '1a',
+    'fig:trends_b': '1b', 'fig:trends': '1', 'app:more': 'A', 'tab:robust': 'A1',
+  });
+  // a label after \caption inside threeparttable belongs to the table, not to the section
+  assert.equal(pnum.labels.get('tab:main').name, 'Table');
+  assert.equal(pnum.labels.get('app:more').name, 'Appendix');
+});
+
+test('paper: \\caption* is unnumbered, sub-captions get letters', () => {
+  const caps = psc.tokens.filter((t) => t.type === 'style' && t.kind === 'caption');
+  assert.deepEqual(caps.map((t) => t.num || t.sub || (t.star ? '*' : '?')), ['1', '(a)', '(b)', '1', '*', 'A1']);
+});
+
+test('paper: title block comes from the body, \\crefname from the preamble', () => {
+  assert.match(psc.meta.title, /^Minimum Wages and Youth Employment\\thanks/);
+  assert.match(psc.meta.author, /Jane Doe/);
+  assert.equal(psc.meta.date, 'November 2026');
+  assert.deepEqual(psc.meta.crefNames, { table: { c: 'Table' }, figure: { c: 'Figure' } });
+});
+
+test('paper: layout wrappers keep their text, table notes are not a bulleted list', () => {
+  const s = scan('\\begin{document}\n\\multirow{2}{*}{Teen} \\parbox{5cm}{note} \\resizebox{\\textwidth}{!}{x}\n');
+  const wraps = s.tokens.filter((t) => t.type === 'style');
+  assert.deepEqual(wraps.map((t) => '\\begin{document}\n\\multirow{2}{*}{Teen} \\parbox{5cm}{note} \\resizebox{\\textwidth}{!}{x}\n'.slice(t.inner.from, t.inner.to)), ['Teen', 'note', 'x']);
+  const item = psc.tokens.find((t) => t.type === 'item');
+  assert.equal(item.notes, true);
+});
+
+test('counters: \\setcounter, \\addtocounter and \\the<counter> templates', () => {
+  const src = [
+    '\\begin{document}', '\\section{One}', '\\setcounter{equation}{4}',
+    '\\begin{equation} a \\label{e5} \\end{equation}',
+    '\\renewcommand{\\theequation}{S\\arabic{equation}}', '\\addtocounter{equation}{-5}',
+    '\\begin{equation} b \\label{s1} \\end{equation}',
+    '\\renewcommand{\\thefigure}{\\thesection.\\alph{figure}}',
+    '\\begin{figure}\\caption{x}\\label{f}\\end{figure}', '',
+  ].join('\n');
+  const s = scan(src);
+  const n = number(src, s);
+  assert.deepEqual(Object.fromEntries([...n.labels].map(([k, v]) => [k, v.text])), { e5: '5', s1: 'S1', f: '1.a' });
+});
+
+test('numbering walks into \\input files; labels and citations in them count', () => {
+  const src = [
+    '\\documentclass{article}', '\\newcommand{\\nObs}{11,672}', '\\newcommand{\\edit}[1]{\\textcolor{blue}{#1}}',
+    '\\renewcommand{\\thetable}{S\\arabic{table}}', '\\begin{document}',
+    '\\input{sections/intro}', '\\begin{appendices}', '\\section{More}\\label{app}',
+    '\\begin{table}\\caption{Here}\\label{t2}\\end{table}', '\\end{appendices}', 'We use \\nObs{} cells and \\edit{new text}.', '',
+  ].join('\n');
+  const inputs = { 'sections/intro': '\\section{Intro}\\label{sec}\nSee \\citet{k1}.\n\\input{tables/t1}\n', 'tables/t1': '\\begin{table}\\caption{There}\\label{t1}\\begin{tabular}{l}a\\end{tabular}\\end{table}' };
+  const s = scan(src);
+  const n = number(src, s, inputs);
+  assert.deepEqual(Object.fromEntries([...n.labels].map(([k, v]) => [k, v.text])), { sec: '1', t1: 'S1', app: 'A', t2: 'S2' });
+  assert.equal(n.labels.get('t1').pos, src.indexOf('\\input'));       // jumps to the \input line
+  assert.deepEqual([...n.cited], ['k1']);
+  assert.equal(s.meta.textMacros.nObs, '11,672');
+  assert.equal(s.tokens.filter((t) => t.type === 'style' && t.name === 'edit').length, 1);
+});
+
+test('align: a commented-out \\nonumber does not count, a label waits for the next numbered row', () => {
+  const src = '\\begin{document}\n\\begin{align}\n\\label{first} a &= b \\nonumber \\\\\n % &= c \\nonumber \\\\\n &= d \\\\\n e &= f \\label{second}\n\\end{align}\n';
+  const s = scan(src);
+  const n = number(src, s);
+  assert.deepEqual(Object.fromEntries([...n.labels].map(([k, v]) => [k, v.text])), { first: '1', second: '2' });
+});

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.0
+
+Brings in what [Basil](https://github.com/hugosantanna/basil) did for applied papers, and makes
+the numbering follow real documents.
+
+- Tables kept in their own files are drawn in place of `\input{…}`, and redrawn when the file
+  changes on disk. A `tabular` that shares its line with other material (a panel heading) renders
+  too. `\multirow`, `\makecell`, `\resizebox{…}{…}{…}` and `\parbox` show their content.
+- `threeparttable` notes, `\caption*` notes and long captions are set as note paragraphs;
+  subfigures are drawn side by side with lettered captions.
+- `\bibliography{…}` / `\printbibliography` show the cited entries of the `.bib` files.
+- The title block picks up `\title`, `\author` and `\date` placed after `\begin{document}`, and
+  lists `\thanks` notes under it.
+- Numbering follows `\appendix`, `\begin{appendices}`, `\setcounter`, `\addtocounter`,
+  `\numberwithin`, `\renewcommand{\the…}{…}`, `\captionof`, theorem environments numbered by hand,
+  and continues through `\input` files. `\cref` uses `\crefname`.
+- Layout commands with arguments (`\vspace{…}`, `\setlength{…}{…}`, `\captionsetup{…}`, …) are
+  hidden like `\centering` already was, and a line that shows nothing takes no room.
+- Macros of the document's own used in running text show their value.
+- Completion for environments, common commands and the document's macros.
+- Fixed: `\caption*` took a figure number; a `\label` after `\caption` inside `threeparttable`
+  resolved to the section; a label inside an environment kept the number of an earlier section;
+  wide tables broke numbers across lines; a commented-out `\nonumber` suppressed an equation number.
+
 ## 0.1.0
 
 First release.
