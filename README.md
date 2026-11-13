@@ -27,7 +27,8 @@ curl -fLO https://github.com/hugosantanna/tex-visual/releases/latest/download/te
 code --install-extension tex-visual.vsix
 ```
 
-Then run **Developer: Reload Window**. To update, run the same two commands again.
+Then run **Developer: Reload Window**. To update, run the same two commands again. What each
+release adds is in the [changelog](CHANGELOG.md).
 
 - **No terminal:** download `tex-visual.vsix` from the
   [latest release](https://github.com/hugosantanna/tex-visual/releases/latest), open the Extensions
@@ -167,7 +168,8 @@ npm run install-local      # build, package, and install into your VS Code
 | `node test/shot.mjs paper.tex out/` | screenshot any `.tex` file as the editor would render it |
 
 Releases are cut by pushing a tag: `npm version patch && git push --follow-tags` builds the
-`.vsix` in CI and attaches it to a GitHub release.
+`.vsix` in CI and attaches it to a GitHub release, with that version's section of
+[`CHANGELOG.md`](CHANGELOG.md) as the release notes.
 
 ## Basil
 

@@ -1,4 +1,5 @@
-# Pushing a tag like v0.2.0 builds the extension and publishes tex-visual.vsix as a GitHub release.
+# Pushing a tag like v0.2.0 builds the extension and publishes tex-visual.vsix as a GitHub release,
+# with that version's section of CHANGELOG.md as the release notes.
 name: Release
 on:
   push:
@@ -19,7 +20,9 @@ jobs:
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
       - run: npm test
       - run: npm run package
+      - name: Release notes from this version's section of CHANGELOG.md
+        run: awk -v v="${GITHUB_REF_NAME#v}" '$0 == "## " v {on=1; next} /^## / {on=0} on' CHANGELOG.md > release-notes.md
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" tex-visual.vsix --title "TeX Visual ${GITHUB_REF_NAME#v}" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" tex-visual.vsix --title "TeX Visual ${GITHUB_REF_NAME#v}" --notes-file release-notes.md --generate-notes
