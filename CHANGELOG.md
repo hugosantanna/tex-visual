@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- Tables are editable where they are drawn. Click a cell to edit its LaTeX; `Tab`, `Shift+Tab`,
+  `Enter` and the arrow keys move between cells, `Cmd+Enter` adds a row. A cell of a table that
+  lives in another file (`\input{tables/…}`) is changed in that file.
+- A file the document `\input`s is redrawn while it is being edited in another tab, before it is
+  saved.
+- Fixed: a click on the title block showed `\maketitle`. A click on the title, the authors, the
+  date or a `\thanks` note now puts the cursor in `\title{…}`, `\author{…}` or `\date{…}`, and
+  shows that command alone while the rest of the preamble stays folded.
+
 ## 0.2.0
 
 Brings in what [Basil](https://github.com/hugosantanna/basil) did for applied papers, and makes

@@ -12,6 +12,23 @@ export default async function (t) {
   t.assert(notes.length === 3 && notes[0].startsWith('*We thank') && notes[1].startsWith('†University'), '\\thanks notes listed under the title: ' + notes.map((n) => n.slice(0, 12)).join(' | '));
   t.assert(!(await page.$eval('.cm-content', (e) => e.textContent)).includes('\\title'), 'the \\title source line is hidden');
 
+  // a click on a part of the title block goes to the command it is written in, not to \maketitle
+  const head0 = await page.evaluate(() => window.__tv.view.state.selection.main.head);
+  const clickOn = async (sel, i = 0) => {
+    const p = await page.$$eval(sel, (els, i) => { const b = els[i].getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }, i);
+    await page.mouse.click(p.x, p.y);
+    await t.sleep(250);
+  };
+  await clickOn('.tv-title');
+  const titleSrc = await page.$eval('.cm-content', (e) => e.innerText);
+  t.assert(titleSrc.includes('\\title{Minimum Wages') && !titleSrc.includes('\\maketitle') && (await text('.tv-title')).length === 1, 'a click on the title shows \\title{…} above the title block, not \\maketitle');
+  await clickOn('.tv-title-note', 2);
+  const around = await page.evaluate(() => { const v = window.__tv.view, h = v.state.selection.main.head; return v.state.doc.sliceString(h - 8, h + 9); });
+  t.assert(around === '\\thanks{Institute', 'a click on a \\thanks note puts the cursor in that note: ' + around);
+  await page.evaluate((h) => window.__tv.view.dispatch({ selection: { anchor: h } }), head0);
+  await t.sleep(150);
+  t.assert(!(await page.$eval('.cm-content', (e) => e.textContent)).includes('\\title'), 'and it folds away again when the cursor leaves');
+
   const cites = await text('.tv-cite');
   t.assert(cites.includes('Card and Krueger (1994)') && cites.includes('(Neumark and Wascher, 2008)'), 'citations resolved from refs.bib: ' + cites.join(' · '));
   const refs = await text('.tv-ref');
@@ -72,6 +89,68 @@ export default async function (t) {
   const opts = await text('.cm-tooltip-autocomplete li');
   t.assert(opts.some((o) => o.startsWith('threeparttable')), 'environment completion: ' + opts.slice(0, 3).join(', '));
   await page.keyboard.press('Escape');
+
+  // ---- tables are edited cell by cell
+  const clickCell = async (text) => {
+    const pt = await page.evaluate((text) => {
+      const td = [...document.querySelectorAll('.tv-tablewrap.tv-editable td[data-c]')].find((x) => x.textContent.trim() === text);
+      if (!td) return null;
+      td.scrollIntoView({ block: 'center' });
+      const r = td.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    }, text);
+    if (!pt) throw new Error('no cell showing ' + text);
+    await page.mouse.click(pt.x, pt.y);
+    await t.sleep(150);
+  };
+  const editor = () => page.$eval('.tv-cell-input', (e) => e.value).catch(() => null);
+  const hostText = async () => { await page.evaluate(() => window.__tv.flush()); await t.sleep(350); return page.evaluate(() => window.__host.text); };
+
+  // a tabular written in the document: the edit lands in the document, Tab moves on
+  await t.scrollTo('\\begin{table}[h]', 'start');
+  await t.sleep(300);
+  await clickCell('-0.041');
+  t.assert(await editor() === '-0.041', 'clicking a cell opens it with its LaTeX source');
+  await page.keyboard.type('$-0.999^{*}$');
+  await page.keyboard.press('Tab');
+  await t.sleep(250);
+  let host = await hostText();
+  t.assert(host.includes('\\multirow{2}{*}{Teenagers} & None & $-0.999^{*}$ \\\\'), 'the cell, and only the cell, changed in the document');
+  t.assert(await editor() === '', 'Tab opened the next cell (an empty one)');
+  await page.keyboard.type('Teens, again');
+  await page.keyboard.press('Enter');
+  await t.sleep(250);
+  host = await hostText();
+  t.assert(host.includes('\n Teens, again & Division trends & -0.036 \\\\'), 'text typed into an empty cell: ' + JSON.stringify(host.slice(host.indexOf('Teens, again') - 4, host.indexOf('Teens, again') + 46)));
+  t.assert(await page.$('.tv-table .katex'), 'math typed into a cell renders');
+  // Enter moved down a row; Ctrl/Cmd+Enter adds a row under it
+  await page.keyboard.down('Control'); await page.keyboard.press('Enter'); await page.keyboard.up('Control');
+  await t.sleep(250);
+  await page.keyboard.type('New row');
+  await page.keyboard.press('Escape');
+  host = await hostText();
+  t.assert(/Young adults\} & None & 0\.006 \\\\\n &  &  \\\\\n & Division trends & 0\.004/.test(host), 'Ctrl+Enter adds an empty row below; Escape discards what was typed');
+  t.assert(await page.evaluate(() => window.__tv.view.state.doc.toString() === window.__host.text), 'editor and document in sync after table edits');
+
+  // a table kept in its own file: the edit goes to that file, not to the document
+  const before = await hostText();
+  await t.scrollTo('\\begin{table}[t]', 'start');
+  await t.sleep(300);
+  await clickCell('-0.112**');
+  t.assert(await editor() === '-0.112**', 'a cell of an \\input table opens the same way');
+  await page.keyboard.type('-0.5');
+  await page.keyboard.press('Enter');
+  await t.sleep(400);
+  const file = await page.evaluate(() => window.__EXT__.inputs['tables/teens.tex']);
+  t.assert(file.includes('Log minimum wage & -0.5 & -0.041 & -0.058* \\\\') && !file.includes('-0.112'), 'the edit was written to tables/teens.tex');
+  t.assert(await editor() === '(0.047)', 'Enter moved to the cell below');
+  await page.keyboard.press('Escape');
+  await t.sleep(200);
+  const shown = await page.$$eval('.tv-tablewrap[data-input] td', (els) => els.map((e) => e.textContent));
+  t.assert(shown.includes('-0.5') && !shown.includes('-0.112**'), 'the table shows the new value');
+  t.assert(await hostText() === before, 'the document itself is untouched by an edit of an \\input table');
+  await t.shot('paper-table-edit');
+
   await page.evaluate(() => window.__tv.flush());
   await t.sleep(300);
   t.assert(await page.evaluate(() => window.__tv.view.state.doc.toString() === window.__host.text), 'editor and document in sync');

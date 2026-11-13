@@ -76,7 +76,12 @@ function gatherExternal(document) {
     const ws = vscode.workspace.getWorkspaceFolder(document.uri);
     outDir = outDir.replace(/%DIR%/g, '.').replace(/%WORKSPACE_FOLDER%/g, ws ? ws.uri.fsPath : '.');
   } else outDir = null;
-  return project.gatherExternal(document.uri.fsPath, document.getText(), { outDir });
+  // tables being edited in another tab are read from there, not from the file on disk
+  const overlay = (p) => {
+    const d = vscode.workspace.textDocuments.find((x) => x.uri.scheme === 'file' && x.uri.fsPath === p);
+    return d ? d.getText() : null;
+  };
+  return project.gatherExternal(document.uri.fsPath, document.getText(), { outDir, overlay });
 }
 
 // ---------------------------------------------------------------- provider
@@ -201,6 +206,9 @@ class TexVisualProvider {
         if (st.panel.active && this.config().followCursor) this.revealInTextEditors(st, m.offset);
         break;
       case 'open': this.openRelative(st, m.path); break;
+      case 'editInput':
+        st.queue = st.queue.then(() => this.editInput(st, m)).catch((e) => this.log.appendLine('table edit failed: ' + (e && e.stack || e)));
+        break;
       case 'debug': {
         const w = this.debugWaiters.get(m.id);
         if (w) { this.debugWaiters.delete(m.id); w(m.result); }
@@ -239,10 +247,36 @@ class TexVisualProvider {
 
   onDocChange(e) {
     if (e.contentChanges.length === 0) return;
+    const file = e.document.uri.scheme === 'file' ? e.document.uri.fsPath : null;
     for (const st of this.panels) {
-      if (st.document !== e.document || !st.ready || st.applying) continue;
+      if (st.document !== e.document) {
+        // a file this document \\input's is being edited elsewhere: redraw it as it changes
+        if (file && st.ready && st.inputFiles && Object.values(st.inputFiles).includes(file)) this.scheduleRefresh(st, 150);
+        continue;
+      }
+      if (!st.ready || st.applying) continue;
       st.panel.webview.postMessage({ type: 'sync', version: e.document.version, text: normText(e.document) });
     }
+  }
+
+  /** A cell of a table kept in another file was edited in the visual editor: write it there. */
+  async editInput(st, m) {
+    const refuse = (why) => {
+      vscode.window.showWarningMessage(`TeX Visual: ${m.path} was not changed (${why}).`);
+      st.externalSig = null;                 // send the real content back
+      this.scheduleRefresh(st, 0);
+    };
+    const file = st.inputFiles && st.inputFiles[m.path];
+    if (!file) { refuse('file not found'); return; }
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    if (doc.getText().slice(m.from, m.to) !== m.expect) { refuse('it changed on disk in the meantime'); return; }
+    const wasDirty = doc.isDirty;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(doc.positionAt(m.from), doc.positionAt(m.to)), m.insert);
+    if (!(await vscode.workspace.applyEdit(edit))) { refuse('the edit was rejected'); return; }
+    // nobody is looking at that file to save it; leave it alone only if it already had unsaved work
+    if (!wasDirty) await doc.save();
+    this.scheduleRefresh(st, 50);
   }
 
   onDocSaved(document) {
@@ -257,6 +291,8 @@ class TexVisualProvider {
       st.refreshTimer = null;
       try {
         const data = await gatherExternal(st.document);
+        st.inputFiles = data.inputFiles;
+        delete data.inputFiles;
         const sig = JSON.stringify(data);
         if (sig === st.externalSig) return;
         st.externalSig = sig;

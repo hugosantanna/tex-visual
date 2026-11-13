@@ -148,6 +148,32 @@ async function run() {
       rows = (await vscode.commands.executeCommand('texVisual._debug', { op: 'state' }) || {}).inputRows || 0;
     }
     check('table redrawn when its file changes on disk', rows === 3, rows);
+
+    // editing a cell of that table writes the other file (and saves it: no editor is open on it)
+    await dbg({ op: 'cell', table: 0, row: 1, col: 1, text: '42' });
+    let onDisk = '';
+    for (let i = 0; i < 30 && !onDisk.includes('1 & 42'); i++) { await sleep(300); onDisk = fs.readFileSync(tbl, 'utf8'); }
+    check('cell edit written to the \\input file', onDisk === '\\begin{tabular}{lc}\nA & B \\\\\n1 & 42 \\\\\n3 & 4 \\\\\n\\end{tabular}\n', onDisk);
+    const tdoc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === tbl);
+    check('the table file is saved, not left dirty', !tdoc || !tdoc.isDirty);
+    const hdoc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === host);
+    check('the document that \\inputs it is untouched', hdoc && !hdoc.isDirty && hdoc.getText() === fs.readFileSync(host, 'utf8'));
+    let cells = [];
+    for (let i = 0; i < 20 && !cells.includes('42'); i++) { await sleep(300); cells = ((await dbg({ op: 'state' })) || {}).cells || []; }
+    check('the table shows the new value', cells.includes('42') && !cells.includes('2'), cells);
+    // a tabular written in the document: the cell edit is an ordinary edit of the document
+    const inl = path.join(dir, 'inline.tex');
+    fs.writeFileSync(inl, '\\documentclass{article}\n\\begin{document}\n\\begin{tabular}{lc}\nA & B \\\\\n1 & 2 \\\\\n\\end{tabular}\n\\end{document}\n');
+    await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(inl), 'texVisual.editor');
+    let is = null;
+    for (let i = 0; i < 30; i++) { await sleep(300); is = await dbg({ op: 'state' }); if (is && is.text.includes('1 & 2') && is.cells.length === 4) break; }
+    await dbg({ op: 'cell', table: 0, row: 1, col: 1, text: '$\\beta$', flush: true, wait: 500 });
+    const idoc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === inl);
+    check('cell edit of a tabular in the document reaches the document', idoc && idoc.getText().includes('1 & $\\beta$ \\\\') && idoc.isDirty, idoc && idoc.getText());
+    await vscode.commands.executeCommand('undo');
+    await sleep(400);
+    check('undo takes the cell edit back', idoc && idoc.getText().includes('1 & 2 \\\\'), idoc && idoc.getText());
+    await vscode.commands.executeCommand('workbench.action.files.revert');
   } catch (e) {
     fatal = String(e && e.stack || e);
   }

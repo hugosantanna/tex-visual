@@ -189,6 +189,203 @@ class PreambleWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+// ------------------------------------------------------------------ editable tables
+//
+// A rendered table is edited cell by cell. Every <td> carries data-c="from:to", the range of
+// its content: in the document for a tabular written there, in the other file for a table
+// pulled in with \input. Committing a cell is an ordinary edit of that range, so undo, sync
+// and source control see nothing special.
+
+/** Where the table drawn in `wrap` comes from: { kind: 'doc', base } or { kind: 'input', path, src }. */
+function tableOrigin(view, wrap) {
+  const pos = view.posAtDOM(wrap);
+  const { sc } = view.state.field(parseField);
+  const ext = view.state.field(externalField);
+  const lineTo = view.state.doc.lineAt(pos).to;
+  let lo = 0, hi = sc.tokens.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (sc.tokens[mid].from < pos) lo = mid + 1; else hi = mid; }
+  for (let k = lo; k < sc.tokens.length && sc.tokens[k].from <= lineTo; k++) {
+    const t = sc.tokens[k];
+    if (t.type === 'tabular') return { kind: 'doc', base: t.from, pos };
+    if (t.type === 'input' && ext.inputs && ext.inputs[t.path] != null) return { kind: 'input', path: t.path, src: ext.inputs[t.path], pos };
+  }
+  return null;
+}
+
+const cellRange = (td) => td.dataset.c.split(':').map(Number);
+const hostPost = (view, message) => view.dom.dispatchEvent(new CustomEvent('tv-post', { bubbles: true, detail: message }));
+
+function cellSource(view, origin, td) {
+  const [from, to] = cellRange(td);
+  return origin.kind === 'doc' ? view.state.doc.sliceString(origin.base + from, origin.base + to) : origin.src.slice(from, to);
+}
+
+/** Replace [from, to) of the table's text (offsets as in data-c / data-end). */
+function applyTableEdit(view, origin, from, to, insert) {
+  if (origin.kind === 'doc') {
+    view.dispatch({ changes: { from: origin.base + from, to: origin.base + to, insert }, userEvent: 'input' });
+    return;
+  }
+  // a table kept in another file: the host writes it there; show the result right away
+  const next = origin.src.slice(0, from) + insert + origin.src.slice(to);
+  hostPost(view, { type: 'editInput', path: origin.path, from, to, insert, expect: origin.src.slice(from, to) });
+  const inputs = Object.assign({}, view.state.field(externalField).inputs, { [origin.path]: next });
+  view.dispatch({ effects: setExternal.of({ inputs }) });
+}
+
+/** The table widget now drawn where `origin` was (the DOM is rebuilt after an edit). */
+function findTableWrap(view, origin) {
+  for (const el of view.dom.querySelectorAll('.tv-tablewrap.tv-editable')) {
+    try { if (view.posAtDOM(el) === origin.pos) return el; } catch (e) { /* detached */ }
+  }
+  return null;
+}
+
+function cellAt(wrap, ti, r, c) {
+  const table = wrap && wrap.querySelectorAll('table.tv-table')[ti];
+  const row = table && table.rows[r];
+  if (!row) return null;
+  const td = row.cells[Math.min(c, row.cells.length - 1)];
+  return td && td.dataset.c ? td : null;
+}
+
+/** Commit `value` into a cell. `then` (optional) names the cell to open next: { ti, r, c }. */
+export function commitCell(view, wrap, td, value, then) {
+  const origin = tableOrigin(view, wrap);
+  if (!origin) return;
+  const [from, to] = cellRange(td);
+  const old = cellSource(view, origin, td);
+  value = value.replace(/\s*\n\s*/g, ' ').trim();
+  if (value !== old) {
+    // keep the source readable when text lands in a cell that was empty
+    const text = origin.kind === 'doc' ? view.state.doc.sliceString(origin.base + to, origin.base + to + 1) : origin.src.slice(to, to + 1);
+    const pad = from === to && value && (text === '&' || text === '\\') ? ' ' : '';
+    applyTableEdit(view, origin, from, to, value + pad);
+  }
+  if (then) requestAnimationFrame(() => {
+    const td2 = cellAt(findTableWrap(view, origin), then.ti, then.r, then.c);
+    if (td2) editCell(view, td2.closest('.tv-tablewrap'), td2);
+  });
+}
+
+/** Add an empty row under the row of `td` and start typing in it. */
+function addRowBelow(view, wrap, td) {
+  const origin = tableOrigin(view, wrap);
+  const tr = td.parentElement;
+  if (!origin || tr.dataset.end == null) return;
+  const at = Number(tr.dataset.end), n = Math.max(1, Number(tr.dataset.n) || tr.cells.length);
+  const table = td.closest('table');
+  const ti = [...wrap.querySelectorAll('table.tv-table')].indexOf(table), r = tr.rowIndex;
+  applyTableEdit(view, origin, at, at, '\n' + new Array(n).fill('').join(' & ') + ' \\\\');
+  requestAnimationFrame(() => {
+    const td2 = cellAt(findTableWrap(view, origin), ti, r + 1, 0);
+    if (td2) editCell(view, td2.closest('.tv-tablewrap'), td2);
+  });
+}
+
+/** Open the editor on one cell: its LaTeX source in a text field. */
+export function editCell(view, wrap, td) {
+  if (td.classList.contains('tv-cell-editing')) return;
+  const origin = tableOrigin(view, wrap);
+  if (!origin) return;
+  const table = td.closest('table');
+  const ti = [...wrap.querySelectorAll('table.tv-table')].indexOf(table);
+  const r = td.parentElement.rowIndex, c = td.cellIndex;
+  const source = cellSource(view, origin, td);
+  const shown = td.innerHTML;
+  const inp = document.createElement('input');
+  inp.className = 'tv-cell-input';
+  inp.spellcheck = false;
+  inp.value = source;
+  const fit = () => { inp.size = Math.max(4, inp.value.length + 1); };
+  fit();
+  td.classList.add('tv-cell-editing');
+  td.replaceChildren(inp);
+  let done = false;
+  const close = (commit, then) => {
+    if (done) return;
+    done = true;
+    const value = inp.value;
+    td.classList.remove('tv-cell-editing');
+    td.innerHTML = shown;
+    if (commit) commitCell(view, wrap, td, value, then);
+    else if (then) { const td2 = cellAt(wrap, then.ti, then.r, then.c); if (td2) editCell(view, wrap, td2); }
+  };
+  const rowCount = table.rows.length;
+  const step = (dr, dc) => {
+    let rr = r, cc = c + dc;
+    if (dr) return rr + dr >= 0 && rr + dr < rowCount ? { ti, r: rr + dr, c } : null;
+    if (cc >= table.rows[rr].cells.length) { rr++; cc = 0; }
+    else if (cc < 0) { rr--; cc = rr >= 0 ? table.rows[rr].cells.length - 1 : 0; }
+    return rr >= 0 && rr < rowCount ? { ti, r: rr, c: cc } : null;
+  };
+  inp.addEventListener('input', fit);
+  inp.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    const leave = (commit, then) => { e.preventDefault(); close(commit, then); if (!then) view.focus(); };
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {       // commit, then a new row under this one
+      e.preventDefault();
+      close(true);
+      const now = findTableWrap(view, origin) || wrap;
+      addRowBelow(view, now, cellAt(now, ti, r, c) || td);
+    } else if (e.key === 'Enter') leave(true, step(e.shiftKey ? -1 : 1, 0));
+    else if (e.key === 'Tab') leave(true, step(0, e.shiftKey ? -1 : 1));
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { const t = step(e.key === 'ArrowDown' ? 1 : -1, 0); if (t) leave(true, t); }
+    else if (e.key === 'Escape') leave(false, null);
+    e.stopPropagation();
+  });
+  inp.addEventListener('blur', () => close(true));
+  inp.focus();
+  inp.select();
+}
+
+/** A rendered table whose cells can be edited where they are. */
+class TableWidget extends WidgetType {
+  constructor(html, cls, tag = 'div', est = -1, attrs = null) {
+    super();
+    this.html = html; this.cls = cls; this.tag = tag; this.est = est; this.attrs = attrs;
+  }
+  eq(o) {
+    return o.html === this.html && o.cls === this.cls && o.tag === this.tag &&
+      JSON.stringify(o.attrs) === JSON.stringify(this.attrs);
+  }
+  toDOM(view) {
+    const el = document.createElement(this.tag);
+    el.className = this.cls + ' tv-editable';
+    el.innerHTML = this.html;
+    if (this.attrs) for (const k in this.attrs) el.setAttribute(k, this.attrs[k]);
+    if (this.tag === 'div') {            // a table on its own lines gets a way back to its source
+      const tools = document.createElement('span');
+      tools.className = 'tv-table-tools';
+      tools.innerHTML = '<button type="button" data-act="source" title="Edit the LaTeX source of this table">&lt;/&gt;</button>';
+      el.appendChild(tools);
+    }
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || (e.target instanceof Element && e.target.closest('.tv-cell-input'))) return;
+      const target = e.target instanceof Element ? e.target : null;
+      const origin = tableOrigin(view, el);
+      if (!origin || !target) return;
+      e.preventDefault();
+      const source = () => {
+        if (origin.kind === 'input') hostPost(view, { type: 'open', path: origin.path });
+        else { view.dispatch({ selection: { anchor: origin.base + 1 }, scrollIntoView: true }); view.focus(); }
+      };
+      if (target.closest('[data-act="source"]') || e.metaKey || e.ctrlKey) { source(); return; }
+      const td = target.closest('td[data-c]');
+      if (!td || !el.contains(td)) return;
+      const where = { ti: [...el.querySelectorAll('table.tv-table')].indexOf(td.closest('table')), r: td.parentElement.rowIndex, c: td.cellIndex };
+      const open = view.dom.querySelector('.tv-cell-input');
+      if (open) open.blur();                         // commits; if it was in this table, the table is redrawn
+      const wrap = el.isConnected ? el : findTableWrap(view, origin);
+      const td2 = cellAt(wrap, where.ti, where.r, where.c);
+      if (td2) editCell(view, wrap, td2);
+    });
+    return el;
+  }
+  get estimatedHeight() { return this.est; }
+  ignoreEvent() { return true; }      // the table handles its own mouse and keys; the cursor stays put
+}
+
 /** Subfigures of one float, side by side. */
 class SubRowWidget extends WidgetType {
   constructor(items) {
@@ -341,8 +538,25 @@ function build(state) {
   // ---- preamble
   if (sc.bodyFrom > 0) {
     const pl = doc.lineAt(Math.max(0, Math.min(doc.length, sc.bodyFrom - 1)));
-    const open = mode.preambleOpen || (focused && main.head <= pl.to);
-    if (!open) {
+    const inside = focused && main.head <= pl.to;
+    const open = mode.preambleOpen || inside;
+    // The cursor in \title{…}, \author{…} or \date{…}, where a click on the title block puts it:
+    // only that command is shown, and the rest of the preamble stays folded.
+    let part = null;
+    if (inside && !mode.preambleOpen && sel.length === 1) {
+      for (const k in sc.titleSrc) {
+        const s = sc.titleSrc[k];
+        if (s.to <= pl.from && main.from >= s.from && main.to <= s.to) part = s;
+      }
+    }
+    if (part) {
+      const a = doc.lineAt(part.from), b = doc.lineAt(part.to);
+      const chip = new PreambleWidget(pl.number, false);
+      if (a.from > 0) widget(0, a.from - 1, chip, true);
+      else rep(0, 0, Decoration.widget({ widget: chip, block: true, side: -1 }));
+      eachLine(a.from, b.to, (l) => addLine(l.from, 'tv-pre'));
+      if (b.to < pl.to) rep(b.to + 1, pl.to, HIDE_BLOCK);
+    } else if (!open) {
       widget(0, pl.to, new PreambleWidget(pl.number, false), true);
     } else {
       rep(0, 0, Decoration.widget({ widget: new PreambleWidget(pl.number, true), block: true, side: -1 }));
@@ -413,13 +627,13 @@ function build(state) {
         if (!html) { eachLine(t.from, t.to, (l) => addLine(l.from, 'tv-src-line')); break; }
         if (!o) { // shares its line with other material (a panel heading, a box around it): draw it in place
           if (touch(t.from, t.to)) mark(t.from, t.to, 'tv-src');
-          else widget(t.from, t.to, new HtmlWidget(html, 'tv-tablewrap tv-table-inline', 'span', -1, sizeAt(t.from)));
+          else widget(t.from, t.to, new TableWidget(html, 'tv-tablewrap tv-table-inline', 'span', -1, sizeAt(t.from)));
           break;
         }
         const fsAttrs = sizeAt(t.from);
         const est = 30 + src.split('\\\\').length * 26;
         if (!touch(t.from, t.to)) {
-          widget(o.from, o.to, new HtmlWidget(html, 'tv-tablewrap', 'div', est, fsAttrs), true);
+          widget(o.from, o.to, new TableWidget(html, 'tv-tablewrap', 'div', est, fsAttrs), true);
         } else {
           eachLine(t.from, t.to, (l) => addLine(l.from, 'tv-src-line'));
           rep(o.to, o.to, Decoration.widget({ widget: new HtmlWidget(html, 'tv-tablewrap tv-preview', 'div', est, fsAttrs), block: true, side: 1 }));
@@ -502,14 +716,14 @@ function build(state) {
           else widget(t.from, t.to, new HtmlWidget('↳ ' + esc(t.path), 'tv-input', 'span', -1, { 'data-input': t.path, title: '⌘-click to open' }));
           break;
         }
-        const attrs = Object.assign({ 'data-input': t.path, title: `\\input{${t.path}} — ⌘-click to open the file` }, sizeAt(t.from));
+        const attrs = Object.assign({ 'data-input': t.path }, sizeAt(t.from));
         const o = own(t.from, t.to);
         const est = 30 + src.split('\\\\').length * 26;
         if (!o) {
           if (rev) mark(t.from, t.to, 'tv-src');
-          else widget(t.from, t.to, new HtmlWidget(html, 'tv-tablewrap tv-table-inline', 'span', -1, attrs));
+          else widget(t.from, t.to, new TableWidget(html, 'tv-tablewrap tv-table-inline', 'span', -1, attrs));
         } else if (!rev) {
-          widget(o.from, o.to, new HtmlWidget(html, 'tv-tablewrap', 'div', est, attrs), true);
+          widget(o.from, o.to, new TableWidget(html, 'tv-tablewrap', 'div', est, attrs), true);
         } else {
           mark(t.from, t.to, 'tv-src');
           rep(o.to, o.to, Decoration.widget({ widget: new HtmlWidget(html, 'tv-tablewrap tv-preview', 'div', est, attrs), block: true, side: 1 }));
@@ -839,6 +1053,22 @@ export const mathTip = StateField.define({
   },
   provide: (f) => showTooltip.from(f, (v) => (v ? v.tooltip : null)),
 });
+
+/**
+ * Where a part of the title block is written: inside \title{…}, \author{…} or \date{…}, or inside
+ * its `note`-th \thanks{…}. Null when the command is not in this file.
+ */
+export function titlePartPos(state, name, note) {
+  const src = state.field(parseField).sc.titleSrc[name];
+  if (!src) return null;
+  const text = state.doc.sliceString(src.arg.from, src.arg.to);
+  if (note != null) {
+    const re = /\\thanks\s*\{\s*/g;
+    let m, k = Number(note);
+    while ((m = re.exec(text))) if (k-- === 0) return src.arg.from + m.index + m[0].length;
+  }
+  return src.arg.from + /^\s*/.exec(text)[0].length;
+}
 
 /** A cursor position in the body that touches no token, so nothing is revealed on open. */
 export function neutralPos(state) {

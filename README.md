@@ -51,6 +51,9 @@ shortcut switches back to the plain text editor.
 | `Cmd+K V` | open the visual editor beside the source, scroll-synced both ways |
 | `</>` button in the title bar | show raw source inside the visual editor |
 | click on anything rendered | reveal its source and edit it |
+| click the title, the authors or the date | edit `\title{…}`, `\author{…}` or `\date{…}`, in the preamble or wherever it is written |
+| click a table cell | edit that cell; `Tab` / `Shift+Tab` next and previous cell, `Enter` / `↑` `↓` the row below or above, `Cmd+Enter` new row below, `Esc` cancel |
+| `</>` on a table (shown on hover), or `Cmd+click` it | the table's LaTeX source |
 | `Cmd+click` a reference or citation | jump to its label or bibliography entry |
 | `Cmd+B`, `Cmd+I` | wrap the selection in `\textbf{}`, `\emph{}` |
 | `Enter` after `\begin{env}` | inserts the matching `\end{env}` |
@@ -91,6 +94,9 @@ To make the visual editor the default for `.tex` files, add this to your setting
 - **Floats.** `tabular` (with `booktabs` rules, `\multicolumn` and `\multirow`) as a table,
   `\includegraphics` for PDF, PNG and JPEG files, and numbered captions. A table kept in its own
   file is drawn where its `\input{tables/…}` stands and redrawn when the file changes on disk.
+  Tables are edited cell by cell: click a cell and type its LaTeX. For a table written in the
+  document that is an ordinary edit of the document; for a table pulled in with `\input` the cell
+  is changed in that table's own file, which is saved.
   `threeparttable` notes, `\caption*` and `\parbox` notes read as notes, subfigures sit side by
   side with their (a), (b) captions, and font-size switches such as `\small` in front of a table
   are honoured.
@@ -139,7 +145,10 @@ Colors follow your VS Code theme, light or dark.
   cannot parse is shown in red with the error as a tooltip. Macros with optional arguments are
   rendered with their default value.
 - TikZ, `verbatim`, listings and algorithm environments stay as source.
-- Tables are rendered read-only; click one to edit its source.
+- Table editing changes what is in the cells and adds rows. Columns, rules and merged cells are
+  changed in the source (`</>` on the table). An edit of an `\input` table is undone in that file,
+  not from the document that includes it; a table a script generates is overwritten the next time
+  the script runs.
 - LaTeX Workshop's IntelliSense does not reach into the visual editor. It has its own completion:
   labels after `\ref{`, keys after `\cite{`, environments after `\begin{`, and the common
   commands and your own macros after a backslash.

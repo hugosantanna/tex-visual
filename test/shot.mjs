@@ -42,6 +42,11 @@ window.acquireVsCodeApi = () => ({
     const h = window.__host; h.log.push(m);
     const send = (x) => setTimeout(() => window.postMessage(x, '*'), 5);
     if (m.type === 'ready') send(Object.assign({ type: 'init', text: h.text, version: h.version, baseUri: '/doc' }, window.__EXT__));
+    if (m.type === 'editInput') {
+      const ext = window.__EXT__, cur = ext.inputs[m.path];
+      if (cur != null && cur.slice(m.from, m.to) === m.expect) ext.inputs[m.path] = cur.slice(0, m.from) + m.insert + cur.slice(m.to);
+      send({ type: 'external', data: { aux: ext.aux, bib: ext.bib, rootPreamble: ext.rootPreamble, inputs: Object.assign({}, ext.inputs) } });
+    }
     if (m.type === 'edit') {
       if (m.baseVersion !== h.version) { send({ type: 'reject', seq: m.seq, version: h.version, text: h.text }); return; }
       let t = h.text;

@@ -151,16 +151,24 @@ export function macroHtml(name, ctx = {}) {
 
 export function titleHtml(meta, ctx) {
   let h = '';
-  const notes = [];
+  const notes = [], owner = [];
   const c = Object.assign({}, ctx, { thanks: notes });
-  if (meta.title) h += `<div class="tv-title">${texToHtml(meta.title, c)}</div>`;
-  if (meta.author && meta.author.trim()) h += `<div class="tv-author">${texToHtml(meta.author, c)}</div>`;
+  // data-meta names the command a part comes from, so a click on it can go to where it is written
+  const part = (name, tex) => {
+    h += `<div class="tv-${name}" data-meta="${name}">${texToHtml(tex, c)}</div>`;
+    while (owner.length < notes.length) owner.push(name);
+  };
+  if (meta.title) part('title', meta.title);
+  if (meta.author && meta.author.trim()) part('author', meta.author);
   const date = meta.date === undefined ? today() : meta.date;
-  if (date) h += `<div class="tv-date">${texToHtml(date, c)}</div>`;
+  if (date) part('date', date);
   // \thanks notes, in the order LaTeX numbers them
   if (notes.length) {
-    h += '<div class="tv-title-notes">' + notes.map((n, i) =>
-      `<div class="tv-title-note"><sup class="tv-thanks">${thanksMark(i)}</sup>${texToHtml(n, ctx)}</div>`).join('') + '</div>';
+    const nth = {};
+    h += '<div class="tv-title-notes">' + notes.map((n, i) => {
+      const k = nth[owner[i]] = (nth[owner[i]] || 0) + 1;
+      return `<div class="tv-title-note" data-meta="${owner[i]}" data-note="${k - 1}"><sup class="tv-thanks">${thanksMark(i)}</sup>${texToHtml(n, ctx)}</div>`;
+    }).join('') + '</div>';
   }
   return h || '<div class="tv-date">\\maketitle</div>';
 }
@@ -171,7 +179,7 @@ export function inputHtml(src, ctx = {}, sub = null) {
   let html = '', n = 0;
   for (const t of tokens) {
     if (t.type === 'tabular') {
-      const h = tabularHtml(src.slice(t.from, t.to), ctx);
+      const h = tabularHtml(src.slice(t.from, t.to), ctx, t.from);
       if (h) { html += `<div class="tv-input-table">${h}</div>`; n++; }
     } else if (t.type === 'style' && t.kind === 'caption' && !t.star) {
       const label = t.num ? `<span class="tv-caption-label">${t.floatName} ${esc(t.num)}:&nbsp;</span>` : '';
@@ -226,39 +234,34 @@ function parseColSpec(spec) {
   return cols;
 }
 
-function splitTop(src, sepRe) {
-  // split at top-level separators: '&' or '\\\\'
-  const parts = [];
-  let depth = 0, start = 0;
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    if (c === '\\') {
-      if (sepRe === '\\\\' && src[i + 1] === '\\' && depth === 0) {
-        parts.push(src.slice(start, i));
-        i += 2;
-        if (src[i] === '*') i++;
-        const m = /^\s*\[[^\]]*\]/.exec(src.slice(i, i + 30));
-        if (m) i += m[0].length;
-        start = i; i--;
-        continue;
-      }
-      i++;
-      continue;
+const RULE_RE = /^\\(toprule|midrule|bottomrule|hline|cmidrule|cline|addlinespace|specialrule|noalign|morecmidrules|endhead|endfirsthead|endfoot|endlastfoot)\b\s*(\([^)]*\))?\s*(\[[^\]]*\])?\s*(\{[^{}]*\})?/;
+const SKIP_RE = /^(?:\s+|%[^\n]*(?:\n|$))+/;      // whitespace and comments between rules
+const isSpace = (c) => c === ' ' || c === '\n' || c === '\t' || c === '\r';
+
+/** The content of a cell: [from, to) without surrounding whitespace, leading comments, or a comment that ends it. */
+function trimCell(src, a, b) {
+  const sk = SKIP_RE.exec(src.slice(a, b));
+  if (sk) a += sk[0].length;
+  for (;;) {
+    while (b > a && isSpace(src[b - 1])) b--;
+    let pc = -1;
+    for (let p = Math.max(a, src.lastIndexOf('\n', b - 1) + 1); p < b; p++) {
+      if (src[p] === '\\') { p++; continue; }
+      if (src[p] === '%') { pc = p; break; }
     }
-    if (c === '{') depth++;
-    else if (c === '}') depth--;
-    else if (c === '$') { const e = src.indexOf('$', i + 1); if (e > 0) i = e; }
-    else if (sepRe === '&' && c === '&' && depth === 0) { parts.push(src.slice(start, i)); start = i + 1; }
+    if (pc < 0) break;
+    b = pc;
   }
-  parts.push(src.slice(start));
-  return parts;
+  return [a, Math.max(a, b)];
 }
 
-const RULE_RE = /^\s*\\(toprule|midrule|bottomrule|hline|cmidrule|cline|addlinespace|specialrule|noalign|morecmidrules|endhead|endfirsthead|endfoot|endlastfoot)\b\s*(\([^)]*\))?\s*(\[[^\]]*\])?\s*(\{[^{}]*\})?/;
-
-export function tabularHtml(src, ctx = {}) {
-  // src is the full \begin{tabular}...\end{tabular} source
-  const m = /^\\begin\{([a-z*]+)\}/.exec(src);
+/**
+ * Rows and cells of a \begin{tabular}...\end{tabular} source, each cell with the range of its
+ * content in src, so a cell can be edited in place. Returns
+ * { cols, rows: [{ rule, end, cells: [{ from, to, span, align, para }] }], bottom } or null.
+ */
+export function tabularModel(src) {
+  const m = /^\\begin\{([a-zA-Z*]+)\}/.exec(src);
   if (!m) return null;
   let i = m[0].length;
   const end = src.lastIndexOf('\\end{' + m[1] + '}');
@@ -276,46 +279,107 @@ export function tabularHtml(src, ctx = {}) {
     i = k + 1;
   }
   const cols = parseColSpec(spec);
-  const body = src.slice(i, end).replace(/(^|[^\\])%.*$/gm, '$1');
-  const rows = [];
-  let pendingRule = null;
-  for (let raw of splitTop(body, '\\\\')) {
-    let rule = pendingRule;
-    pendingRule = null;
-    let mm;
-    while ((mm = RULE_RE.exec(raw))) {
-      const r = mm[1];
-      if (r === 'toprule' || r === 'bottomrule') rule = 'heavy';
-      else if (r === 'midrule' || r === 'hline') rule = rule === 'heavy' ? 'heavy' : 'light';
-      else if ((r === 'cmidrule' || r === 'cline') && !rule) rule = 'partial';
-      raw = raw.slice(mm[0].length);
+
+  // split [i, end) at top-level \\ into rows and at top-level & into cells, keeping offsets
+  const raw = [];
+  let depth = 0, cellFrom = i, cur = { cells: [], end: null };
+  for (let p = i; p < end; p++) {
+    const c = src[p];
+    if (c === '%') { const nl = src.indexOf('\n', p); p = nl < 0 || nl >= end ? end : nl; continue; }
+    if (c === '\\') {
+      if (src[p + 1] === '\\' && depth === 0) {
+        cur.cells.push({ from: cellFrom, to: p });
+        let q = p + 2;
+        if (src[q] === '*') q++;
+        const o = /^[ \t]*\[[^\]\n]*\]/.exec(src.slice(q, q + 30));
+        if (o) q += o[0].length;
+        cur.end = q;
+        raw.push(cur);
+        cur = { cells: [], end: null };
+        cellFrom = q; p = q - 1;
+        continue;
+      }
+      p++;
+      continue;
     }
-    if (raw.trim() === '') { if (rule) pendingRule = rule; continue; }
-    rows.push({ rule, cells: splitTop(raw, '&') });
+    if (c === '{') depth++;
+    else if (c === '}') depth--;
+    else if (c === '$') { const e = src.indexOf('$', p + 1); if (e > 0 && e < end) p = e; }
+    else if (c === '&' && depth === 0) { cur.cells.push({ from: cellFrom, to: p }); cellFrom = p + 1; }
   }
+  cur.cells.push({ from: cellFrom, to: end });
+  raw.push(cur);
+
+  const rows = [];
+  let pending = null;
+  for (const r of raw) {
+    let rule = pending;
+    pending = null;
+    // rules in front of the row belong to its top edge
+    let at = r.cells[0].from;
+    const stop = r.cells[0].to;
+    for (;;) {
+      const sk = SKIP_RE.exec(src.slice(at, stop));
+      const q = at + (sk ? sk[0].length : 0);
+      const mm = RULE_RE.exec(src.slice(q, stop));
+      if (!mm) break;
+      const name = mm[1];
+      if (name === 'toprule' || name === 'bottomrule') rule = 'heavy';
+      else if (name === 'midrule' || name === 'hline') rule = rule === 'heavy' ? 'heavy' : 'light';
+      else if ((name === 'cmidrule' || name === 'cline') && !rule) rule = 'partial';
+      at = q + mm[0].length;
+    }
+    r.cells[0].from = at;
+    const cells = [];
+    let ci = 0, any = false;
+    for (let idx = 0; idx < r.cells.length; idx++) {
+      const c = r.cells[idx];
+      let [a, b] = trimCell(src, c.from, c.to);
+      let span = 1, align = cols[ci] || 'left';
+      const mc = /^\\multicolumn\s*\{(\d+)\}\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}\s*\{/.exec(src.slice(a, b));
+      if (mc) {
+        span = parseInt(mc[1], 10) || 1;
+        const al = parseColSpec(mc[2])[0];
+        if (al) align = al;
+        const open = a + mc[0].length - 1, k = matchBrace(src, open, b);
+        [a, b] = trimCell(src, open + 1, k >= 0 ? k : b);
+      }
+      if (a < b) any = true;
+      else if (!mc) {
+        // an empty cell: new text goes one space in. When the gap runs over a line break or a
+        // comment (the first cell of a row), it goes at the end of the gap, in front of the &.
+        const gap = src.slice(c.from, c.to);
+        const sameLine = idx > 0 && idx === r.cells.length - 1;
+        a = b = !sameLine && /[\n%]/.test(gap) ? c.to : c.from + (gap[0] === ' ' ? 1 : 0);
+      }
+      const para = align === 'para';
+      cells.push({ from: a, to: b, span, align: para ? 'left' : align, para });
+      ci += span;
+    }
+    if (!any && cells.length === 1) { if (rule) pending = rule; continue; }   // nothing but rules
+    rows.push({ rule, end: r.end, cells });
+  }
+  return { cols, rows, bottom: pending };
+}
+
+/**
+ * HTML for a tabular. Every cell carries data-c="from:to", the range of its content in the
+ * text the table came from (base is where src starts in that text).
+ */
+export function tabularHtml(src, ctx = {}, base = 0) {
+  const model = tabularModel(src);
+  if (!model) return null;
+  const { rows, bottom } = model;
+  const width = Math.max(model.cols.length, ...rows.map((r) => r.cells.reduce((n, c) => n + c.span, 0)));
   let html = '<table class="tv-table"><tbody>';
   rows.forEach((row, ri) => {
     const cls = [];
     if (row.rule === 'heavy') cls.push('tv-rule-heavy');
     else if (row.rule === 'light') cls.push('tv-rule-light');
-    if (ri === rows.length - 1 && pendingRule) cls.push(pendingRule === 'heavy' ? 'tv-rule-bottom-heavy' : 'tv-rule-bottom-light');
-    html += `<tr class="${cls.join(' ')}">`;
-    let ci = 0;
-    for (let cell of row.cells) {
-      cell = cell.trim();
-      let span = 1, align = cols[ci] || 'left';
-      const para = align === 'para';
-      if (para) align = 'left';
-      const mc = /^\\multicolumn\s*\{(\d+)\}\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}\s*\{/.exec(cell);
-      if (mc) {
-        span = parseInt(mc[1], 10) || 1;
-        const a = parseColSpec(mc[2])[0];
-        if (a) align = a === 'para' ? 'left' : a;
-        const k = matchBrace(cell, mc[0].length - 1);
-        cell = k >= 0 ? cell.slice(mc[0].length, k) : cell.slice(mc[0].length);
-      }
-      html += `<td style="text-align:${align}"${para ? ' class="tv-para"' : ''}${span > 1 ? ` colspan="${span}"` : ''}>${texToHtml(cell, ctx)}</td>`;
-      ci += span;
+    if (ri === rows.length - 1 && bottom) cls.push(bottom === 'heavy' ? 'tv-rule-bottom-heavy' : 'tv-rule-bottom-light');
+    html += `<tr class="${cls.join(' ')}"${row.end != null ? ` data-end="${base + row.end}"` : ''} data-n="${width}">`;
+    for (const c of row.cells) {
+      html += `<td style="text-align:${c.align}" data-c="${base + c.from}:${base + c.to}"${c.para ? ' class="tv-para"' : ''}${c.span > 1 ? ` colspan="${c.span}"` : ''}>${texToHtml(src.slice(c.from, c.to), ctx)}</td>`;
     }
     html += '</tr>';
   });

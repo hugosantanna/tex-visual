@@ -273,6 +273,26 @@ export function parsePreamble(src) {
   return meta;
 }
 
+/**
+ * Where \title{…}, \author{…} and \date{…} are written in text[0, limit): { title: { from, to, arg: { from, to } }, … }.
+ * The last one of each counts, as in LaTeX.
+ */
+function findTitleSource(text, limit) {
+  const out = {};
+  const re = /\\(title|author|date)(?![a-zA-Z@])/g;
+  let m;
+  while ((m = re.exec(text)) && m.index < limit) {
+    const ls = text.lastIndexOf('\n', m.index) + 1;
+    if (/(^|[^\\])%/.test(text.slice(ls, m.index))) continue;        // commented out
+    const o = readOpt(text, re.lastIndex);
+    const a = readReq(text, o ? o.to : re.lastIndex);
+    if (!a || a.to > limit) continue;
+    out[m[1]] = { from: m.index, to: a.to, arg: { from: a.from + 1, to: a.to - 1 } };
+    re.lastIndex = a.to;
+  }
+  return out;
+}
+
 function findDocBegin(text) {
   const re = /\\begin\{document\}/g;
   let m;
@@ -302,7 +322,7 @@ function findEnvEnd(text, name, from) {
 
 /**
  * Scan a document (or, with fragment=true, a snippet of body text).
- * Returns { tokens, envs, bodyFrom, meta }.
+ * Returns { tokens, envs, bodyFrom, meta, titleSrc }.
  */
 export function scan(text, opts = {}) {
   const n = text.length;
@@ -311,6 +331,7 @@ export function scan(text, opts = {}) {
   const stack = [];
   let bodyFrom = 0;
   let meta;
+  let titleSrc = {};          // where \title, \author and \date are written in this text, for the title block
   if (opts.fragment) {
     meta = opts.meta || parsePreamble('');
   } else {
@@ -319,6 +340,7 @@ export function scan(text, opts = {}) {
     if (d >= 0) {
       const nl = text.indexOf('\n', d);
       bodyFrom = nl < 0 ? n : nl + 1;
+      titleSrc = findTitleSource(text, d);
     }
   }
   const theoremNames = Object.assign({}, DEFAULT_THEOREMS);
@@ -426,7 +448,7 @@ export function scan(text, opts = {}) {
 
   while (stack.length) stack.pop(); // unclosed environments are simply left as source
   envs.sort((a, b) => a.from - b.from);
-  return { tokens, envs, bodyFrom, tail, meta, theoremNames };
+  return { tokens, envs, bodyFrom, tail, meta, theoremNames, titleSrc };
 
   // ---- helpers (closures over text/tokens) ----
 
@@ -695,7 +717,10 @@ export function scan(text, opts = {}) {
       } else if (!opts.fragment && (name === 'title' || name === 'author' || name === 'date')) {
         // \title{...} after \begin{document}: still what \maketitle prints.
         const a = /\{/.exec(text.slice(j, to));
-        if (a && text[to - 1] === '}') { meta[name] = text.slice(j + a.index + 1, to - 1); tok.titlemeta = true; }
+        if (a && text[to - 1] === '}') {
+          meta[name] = text.slice(j + a.index + 1, to - 1); tok.titlemeta = true;
+          titleSrc[name] = { from, to, arg: { from: j + a.index + 1, to: to - 1 } };
+        }
       }
       return to;
     }

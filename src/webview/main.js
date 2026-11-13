@@ -9,7 +9,7 @@ import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { tags } from '@lezer/highlight';
 import {
   externalField, modeField, parseField, decoField, mathTip, setExternal, setMode, assetsChanged,
-  focusField, setFocus, neutralPos,
+  focusField, setFocus, neutralPos, commitCell, titlePartPos,
 } from './decorate.js';
 import { LIST_ENVS } from './latex.js';
 import { figureStats, invalidateAssets } from './figures.js';
@@ -164,7 +164,18 @@ function smartEnter(v) {
 }
 
 function onMouseDown(e, v) {
-  if (!(e.metaKey || e.ctrlKey)) return false;
+  if (!(e.metaKey || e.ctrlKey)) {
+    // The title block stands where \maketitle is, but what it shows is written elsewhere: a click
+    // on the title, the authors, the date or a \thanks note goes to that command.
+    if (e.button !== 0 || e.shiftKey || e.altKey) return false;
+    const part = e.target instanceof Element ? e.target.closest('.tv-titleblock [data-meta]') : null;
+    const at = part ? titlePartPos(v.state, part.dataset.meta, part.dataset.note) : null;
+    if (at == null) return false;
+    e.preventDefault();
+    v.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'nearest', yMargin: 120 }) });
+    v.focus();
+    return true;
+  }
   const el = e.target instanceof Element ? e.target.closest('[data-key],[data-cite],[data-input]') : null;
   if (!el) return false;
   const { sc, num } = v.state.field(parseField);
@@ -292,6 +303,7 @@ function debugState() {
     inputTables: root.querySelectorAll('.tv-tablewrap[data-input] .tv-table').length,
     references: root.querySelectorAll('.tv-refs-entry').length,
     inputRows: root.querySelectorAll('.tv-tablewrap[data-input] .tv-table tr').length,
+    cells: [...root.querySelectorAll('.tv-tablewrap.tv-editable td[data-c]')].slice(0, 400).map((n) => n.textContent),
     captions: [...root.querySelectorAll('.tv-caption-label')].map((n) => n.textContent.trim()),
     figureErrors: [...root.querySelectorAll('.tv-figure .tv-missing')].map((n) => n.textContent),
     figureStats: figureStats(),
@@ -335,6 +347,13 @@ window.addEventListener('message', (e) => {
       } else if (msg.op === 'select') {
         view.dispatch({ selection: { anchor: msg.at, head: msg.head == null ? msg.at : msg.head }, effects: EditorView.scrollIntoView(msg.at, { y: 'center' }) });
       } else if (msg.op === 'flush') flush();
+      else if (msg.op === 'cell') {        // edit one table cell the way a click and typing would
+        const wrap = view.dom.querySelectorAll('.tv-tablewrap.tv-editable')[msg.table || 0];
+        const table = wrap && wrap.querySelector('table.tv-table');
+        const td = table && table.rows[msg.row] && table.rows[msg.row].cells[msg.col];
+        if (td) commitCell(view, wrap, td, msg.text);
+        if (msg.flush) flush();
+      }
       requestAnimationFrame(() => setTimeout(() => post({ type: 'debug', id: msg.id, result: debugState() }), msg.wait || 0));
       break;
     default:
@@ -351,6 +370,8 @@ function applyConfig(cfg) {
 }
 applyConfig(window.__TV__ && window.__TV__.config);
 
+// the table widgets talk to the host through the page (edits of \\input files, opening them)
+window.addEventListener('tv-post', (e) => { if (e.detail && e.detail.type === 'editInput') flush(); post(e.detail); });
 window.addEventListener('visibilitychange', flush);
 window.addEventListener('pagehide', flush);
 window.__tv = { get view() { return view; }, debugState, flush, toggleSource };

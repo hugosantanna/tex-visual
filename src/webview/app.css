@@ -161,6 +161,23 @@ body { margin: 0; padding: 0 !important; background: var(--tv-bg); color: var(--
 .tv-table tr.tv-rule-bottom-heavy td { border-bottom: 1.5px solid currentColor; }
 .tv-table tr.tv-rule-bottom-light td { border-bottom: 1px solid var(--tv-rule); }
 .tv-table-inline { display: inline-block; padding: 0; vertical-align: middle; }
+/* editable tables: a cell is a text field waiting to happen */
+.tv-tablewrap.tv-editable { position: relative; }
+.tv-tablewrap.tv-editable td[data-c] { cursor: text; }
+.tv-tablewrap.tv-editable td[data-c]:hover { box-shadow: inset 0 0 0 1px var(--tv-rule); border-radius: 2px; }
+.tv-table td.tv-cell-editing { padding: 0 0.15em; box-shadow: none; }
+.tv-cell-input {
+  font-family: var(--tv-mono); font-size: 0.86em; line-height: 1.5; color: var(--tv-fg); background: var(--tv-bg);
+  border: 1px solid var(--tv-accent); border-radius: 3px; outline: none; margin: 0; padding: 0.12em 0.4em;
+  box-sizing: content-box; text-align: inherit; max-width: 60vw;
+}
+.tv-table-tools { position: absolute; top: 2px; right: 2px; opacity: 0; transition: opacity 0.12s; }
+.tv-tablewrap.tv-editable:hover .tv-table-tools { opacity: 1; }
+.tv-table-tools button {
+  font-family: var(--tv-mono); font-size: 10.5px; line-height: 1; color: var(--tv-dim); background: var(--tv-bg);
+  border: 1px solid var(--tv-rule); border-radius: 4px; padding: 3px 5px; cursor: pointer;
+}
+.tv-table-tools button:hover { color: var(--tv-fg); border-color: var(--tv-dim); }
 .tv-input-table + .tv-input-table { padding-top: 0.9em; }
 .tv-input-caption { font-size: 0.92em; padding-bottom: 0.3em; }
 .tv-tablewrap[data-input] { cursor: text; }

@@ -49,4 +49,31 @@ export default async function (t) {
   await page.evaluate(() => window.__remote(0, 0, '% edited elsewhere\n'));
   await t.sleep(300);
   t.assert(await page.evaluate(() => window.__tv.view.state.doc.toString() === window.__host.text), 'external edit merged');
+
+  // the title block: a click on the title goes to \title{…} in the preamble, not to \maketitle
+  const clickOn = async (sel) => {
+    const p = await page.$eval(sel, (e) => { const b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+    await page.mouse.click(p.x, p.y);
+    await t.sleep(250);
+  };
+  const shown = () => page.$eval('.cm-content', (e) => e.innerText);
+  await page.evaluate(() => { window.__tv.view.scrollDOM.scrollTop = 0; });
+  await t.sleep(250);
+  await clickOn('.tv-title');
+  let src = await shown();
+  t.assert(src.includes('\\title{Cournot Competition in One Page}') && !src.includes('\\maketitle'), 'a click on the title shows \\title{…}, not \\maketitle');
+  t.assert(!src.includes('\\usepackage') && (await page.$eval('.tv-preamble', (e) => e.textContent)).startsWith('▸'), 'the rest of the preamble stays folded');
+  await page.keyboard.type('On ', { delay: 5 });
+  await t.sleep(250);
+  t.assert(await page.$eval('.tv-title', (e) => e.textContent) === 'On Cournot Competition in One Page', 'typing there changes the title as drawn');
+  await t.shot('demo-title');
+  await clickOn('.tv-author');
+  src = await shown();
+  t.assert(src.includes('\\author{TeX Visual demo}') && !src.includes('\\title{'), 'a click on the authors shows \\author{…} instead');
+  await page.keyboard.press('ArrowUp');
+  await t.sleep(250);
+  t.assert((await shown()).includes('\\usepackage'), 'moving on into the preamble opens all of it');
+  await page.evaluate(() => window.__tv.flush());
+  await t.sleep(400);
+  t.assert(await page.evaluate(() => window.__host.text.includes('\\title{On Cournot') && window.__tv.view.state.doc.toString() === window.__host.text), 'the edited title reached the document');
 }

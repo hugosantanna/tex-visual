@@ -158,3 +158,18 @@ test('align: a commented-out \\nonumber does not count, a label waits for the ne
   const n = number(src, s);
   assert.deepEqual(Object.fromEntries([...n.labels].map(([k, v]) => [k, v.text])), { first: '1', second: '2' });
 });
+
+test('title block: where \\title, \\author and \\date are written', () => {
+  const at = (txt, s) => txt.slice(s.arg.from, s.arg.to);
+  // demo.tex keeps them in the preamble, paper.tex after \begin{document}
+  assert.equal(at(text, sc.titleSrc.title), 'Cournot Competition in One Page');
+  assert.equal(at(text, sc.titleSrc.date), '\\today');
+  assert.ok(sc.titleSrc.title.to <= sc.bodyFrom);
+  assert.ok(psc.titleSrc.author.from >= psc.bodyFrom);
+  assert.equal(at(paper, psc.titleSrc.date), 'November 2026');
+  // a commented-out \title and \titleformat are not it; the optional argument is skipped
+  const t2 = '% \\title{Old}\n\\title[Short]{New \\emph{one}}\n\\titleformat{x}\n\\begin{document}\n\\maketitle\n';
+  const s2 = scan(t2);
+  assert.equal(at(t2, s2.titleSrc.title), 'New \\emph{one}');
+  assert.equal(s2.titleSrc.author, undefined);
+});
