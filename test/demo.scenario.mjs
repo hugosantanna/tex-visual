@@ -76,4 +76,26 @@ export default async function (t) {
   await page.evaluate(() => window.__tv.flush());
   await t.sleep(400);
   t.assert(await page.evaluate(() => window.__host.text.includes('\\title{On Cournot') && window.__tv.view.state.doc.toString() === window.__host.text), 'the edited title reached the document');
+
+  // unfolding the preamble and folding it again leaves the title block as it was
+  await page.evaluate(() => { window.__tv.view.scrollDOM.scrollTop = 0; });
+  await clickOn('.tv-title');
+  await clickOn('.tv-preamble');
+  t.assert((await shown()).includes('\\usepackage') && (await page.$eval('.tv-preamble', (e) => e.textContent)).startsWith('▾'), 'the preamble unfolds from its chip');
+  await page.evaluate(() => { window.__tv.view.scrollDOM.scrollTop = 0; });
+  await t.sleep(200);
+  await clickOn('.tv-preamble');
+  src = await shown();
+  t.assert(!src.includes('\\usepackage') && !src.includes('\\maketitle') && !src.includes('\\title{') && await page.$('.tv-titleblock .tv-title'), 'folded again: no \\maketitle, the title block is there to click');
+  await clickOn('.tv-title');
+  t.assert((await shown()).includes('\\title{On Cournot'), 'and one click on the title opens \\title{…} again');
+
+  // the cursor on \maketitle itself: the command, with the title block kept under it
+  await t.goto('\\maketitle', 3);
+  await t.sleep(250);
+  t.assert((await shown()).includes('\\maketitle') && await page.$('.tv-titleblock.tv-preview .tv-title'), '\\maketitle under the cursor keeps the title block as a preview');
+  await t.shot('demo-maketitle');
+  await clickOn('.tv-titleblock.tv-preview .tv-title');
+  src = await shown();
+  t.assert(src.includes('\\title{On Cournot') && !src.includes('\\maketitle'), 'a click on the title in that preview opens \\title{…}');
 }

@@ -2,7 +2,7 @@
   "name": "tex-visual",
   "displayName": "TeX Visual",
   "description": "Overleaf-style visual editor for LaTeX: math, headings, references, tables and figures render in place while you edit the .tex source.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "hugosantanna",
   "private": true,
   "license": "MIT",
@@ -38,7 +38,7 @@
     "package": "node build.mjs && vsce package --no-dependencies -o tex-visual.vsix",
     "install-local": "npm run package && code --install-extension tex-visual.vsix --force",
     "pretest": "node build.mjs",
-    "test": "node --test test/scan.test.mjs test/table.test.mjs && node test/shot.mjs examples/demo.tex .shots test/demo.scenario.mjs && node test/shot.mjs examples/paper.tex .shots test/paper.scenario.mjs && node test/shot.mjs examples/demo.tex .shots test/fuzz.scenario.mjs && node test/shot.mjs examples/paper.tex .shots test/fuzz.scenario.mjs",
+    "test": "node --test test/scan.test.mjs test/flow.test.mjs test/color.test.mjs test/table.test.mjs test/build.test.mjs && node test/shot.mjs examples/demo.tex .shots test/demo.scenario.mjs && node test/shot.mjs examples/paper.tex .shots test/paper.scenario.mjs && node test/shot.mjs examples/demo.tex .shots test/fuzz.scenario.mjs && node test/shot.mjs examples/paper.tex .shots test/fuzz.scenario.mjs",
     "test:e2e": "bash test/e2e/run.sh"
   },
   "contributes": {
@@ -89,6 +89,12 @@
         "title": "Switch Back to Text Editor",
         "category": "TeX Visual",
         "icon": "$(file-code)"
+      },
+      {
+        "command": "texVisual.build",
+        "title": "Build LaTeX Project",
+        "category": "TeX Visual",
+        "icon": "$(play)"
       }
     ],
     "menus": {
@@ -138,6 +144,10 @@
         {
           "command": "texVisual.editAsText",
           "when": "activeCustomEditorId == 'texVisual.editor'"
+        },
+        {
+          "command": "texVisual.build",
+          "when": "activeCustomEditorId == 'texVisual.editor'"
         }
       ]
     },
@@ -158,6 +168,12 @@
         "command": "texVisual.editAsText",
         "key": "ctrl+shift+v",
         "mac": "cmd+shift+v",
+        "when": "activeCustomEditorId == 'texVisual.editor'"
+      },
+      {
+        "command": "texVisual.build",
+        "key": "ctrl+alt+b",
+        "mac": "cmd+alt+b",
         "when": "activeCustomEditorId == 'texVisual.editor'"
       }
     ],
@@ -187,6 +203,11 @@
           "type": "boolean",
           "default": true,
           "description": "Keep the visual editor and a text editor showing the same file scrolled to the same place."
+        },
+        "texVisual.buildOnSave": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Compile when a file is saved from the visual editor, by running the LaTeX Workshop recipe (`latex-workshop.latex.recipes`). LaTeX Workshop itself builds only while a text editor is the active editor, so without this a save from the visual editor compiles nothing. Follows `latex-workshop.latex.autoBuild.run`: nothing is built when that is `never`."
         }
       }
     }

@@ -1,5 +1,6 @@
 % An applied paper laid out the way they usually are: tables kept in their own files, notes
-% under every exhibit, subfigures, an appendix that restarts the numbering, a .bib file.
+% under every exhibit, subfigures, an appendix that restarts the numbering, a .bib file, and
+% paragraphs written some on one long line and some wrapped at a fixed width.
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,graphicx,booktabs,threeparttable,subcaption,multirow}
@@ -23,7 +24,10 @@ We revisit the employment effects of state minimum wages for teenagers and young
 \section{Introduction}
 \label{sec:intro}
 
-Whether minimum wages reduce employment has been debated since \citet{card1994}. Panel studies often find losses concentrated among teenagers \citep{neumark2008}, while designs that compare neighbouring counties do not \citep{dube2010,cengiz2019}. \Cref{tab:main} reports both for our sample, \cref{fig:trends} shows the raw series, and \cref{tab:robust} varies the specification.
+Whether minimum wages reduce employment has been debated since \citet{card1994}. Panel studies
+often find losses concentrated among teenagers \citep{neumark2008}, while designs that compare
+neighbouring counties do not \citep{dube2010,cengiz2019}. \Cref{tab:main} reports both for our
+sample, \cref{fig:trends} shows the raw series, and \cref{tab:robust} varies the specification.
 
 \section{Results}
 \label{sec:results}
@@ -48,7 +52,8 @@ where $y_{st}$ is log employment in state $s$ and quarter $t$. The pre-period pa
 \begin{tabular}{@{}l@{}}\textit{Panel B: Young adults}\end{tabular}\par\vspace{0.3em}
 \input{tables/young_adults}
 \begin{tablenotes}[flushleft]\footnotesize
-\item \textit{Notes:} Estimates of equation~\eqref{eq:main}. Column~(2) adds county-pair by quarter effects as in \citet{dube2010}. Standard errors clustered by state. $^{*}p<0.10$, $^{**}p<0.05$.
+\item \textit{Notes:} Estimates of equation~\eqref{eq:main}. Column~(2) adds county-pair by quarter
+effects as in \citet{dube2010}. Standard errors clustered by state. $^{*}p<0.10$, $^{**}p<0.05$.
 \end{tablenotes}
 \end{threeparttable}
 \end{table}

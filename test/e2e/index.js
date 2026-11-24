@@ -174,6 +174,18 @@ async function run() {
     await sleep(400);
     check('undo takes the cell edit back', idoc && idoc.getText().includes('1 & 2 \\\\'), idoc && idoc.getText());
     await vscode.commands.executeCommand('workbench.action.files.revert');
+
+    // saving from the visual editor compiles. LaTeX Workshop builds only while a text editor is the
+    // active editor, so TeX Visual runs its recipe (a stand-in that leaves a file, see run.sh)
+    const built = path.join(dir, 'tv-built.txt');
+    await sleep(1200);
+    try { fs.unlinkSync(built); } catch (e) { /* not there */ }
+    check('no text editor is active while the visual editor is', vscode.window.activeTextEditor === undefined);
+    await dbg({ op: 'type', at: idoc.getText().indexOf('A & B'), text: 'X', flush: true, wait: 400 });
+    await idoc.save();
+    for (let i = 0; i < 40 && !fs.existsSync(built); i++) await sleep(250);
+    const mark = fs.existsSync(built) ? fs.readFileSync(built, 'utf8').trim() : null;
+    check('a save from the visual editor runs the LaTeX Workshop recipe', mark === 'inline', mark);
   } catch (e) {
     fatal = String(e && e.stack || e);
   }

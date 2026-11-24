@@ -12,7 +12,16 @@ SRC="$(cd "$(dirname "$FILE")" && pwd)"; NAME="$(basename "$FILE")"
 APP="${VSCODE_APP:-/Applications/Visual Studio Code.app/Contents/MacOS/Electron}"
 # VS Code's IPC socket lives under the user-data dir and its path must stay under ~100 chars.
 W="$ROOT/.e2e"
-rm -rf "$W"; mkdir -p "$W/work" "$W/ud" "$W/ext"
+rm -rf "$W"; mkdir -p "$W/work" "$W/ud/User" "$W/ext"
+# LaTeX Workshop is not installed in the test instance; its settings are, with a recipe that only
+# leaves a file behind, so the test can tell that a save from the visual editor ran it.
+cat > "$W/ud/User/settings.json" <<'JSON'
+{
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  "latex-workshop.latex.recipes": [{ "name": "stand-in", "tools": ["mark"] }],
+  "latex-workshop.latex.tools": [{ "name": "mark", "command": "/bin/sh", "args": ["-c", "echo %DOCFILE% > '%OUTDIR%/tv-built.txt'"] }]
+}
+JSON
 cp "$SRC/$NAME" "$W/work/"; [ -d "$SRC/figures" ] && cp -R "$SRC/figures" "$W/work/"
 # When launched from a VS Code terminal, drop its environment so the test instance starts clean.
 for v in $(env | grep -oE '^(VSCODE|ELECTRON)_[A-Z_]+'); do unset "$v"; done

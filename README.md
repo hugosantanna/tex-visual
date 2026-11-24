@@ -57,12 +57,14 @@ shortcut switches back to the plain text editor.
 | `Cmd+click` a reference or citation | jump to its label or bibliography entry |
 | `Cmd+B`, `Cmd+I` | wrap the selection in `\textbf{}`, `\emph{}` |
 | `Enter` after `\begin{env}` | inserts the matching `\end{env}` |
+| `Cmd+S` | save, and compile with your LaTeX Workshop recipe |
+| `Cmd+Alt+B` | compile now |
 | `Cmd+F` | search |
 
 There are two example papers: [`examples/demo.tex`](examples/demo.tex) (theory: theorems, aligned
 equations, a `thebibliography`) and [`examples/paper.tex`](examples/paper.tex) (applied: tables kept
-in their own files, table notes, subfigures, an appendix, a `.bib` file). Between them they exercise
-everything below.
+in their own files, table notes, subfigures, an appendix, a `.bib` file, paragraphs wrapped in the
+source). Between them they exercise everything below.
 
 To make the visual editor the default for `.tex` files, add this to your settings:
 
@@ -90,7 +92,17 @@ To make the visual editor the default for `.tex` files, add this to your setting
 - **Structure.** `\title`/`\author`/`\date` at `\maketitle` (with `\thanks` notes under the
   block), `abstract`, sectioning commands,
   `\paragraph`, theorem and `proof` environments, `itemize`/`enumerate`/`description`, footnotes,
-  `\emph`, `\textbf`, `\texttt`, `\textsc`, `\underline`, `\href`, `\url`.
+  `\emph`, `\textbf`, `\texttt`, `\textsc`, `\underline`, `\sout`, `\href`, `\url`.
+- **Paragraphs.** A paragraph fills the width of the page however its source is wrapped: on one
+  long line, at 80 columns, or one sentence per line. A single line break is the space TeX makes
+  of it, and a blank line starts a new paragraph. The file keeps its line breaks; the `</>` button
+  shows them. `\\`, `\item`, headings, displays, tables and lines that hold only commands still
+  start a line of their own.
+- **Color.** `\textcolor`, `\color`, `\hl` and `\colorbox` show their color, in text and in math,
+  with xcolor's names (`dvipsnames` and `svgnames` included), the colors you `\definecolor`, and
+  mixes like `red!60!black`. A macro of your own that colors its argument, such as
+  `\newcommand{\edit}[1]{\textcolor{red}{#1}}`, colors it here too, and one that strikes it out
+  (`\textcolor{red}{\sout{#1}}`) strikes it out.
 - **Floats.** `tabular` (with `booktabs` rules, `\multicolumn` and `\multirow`) as a table,
   `\includegraphics` for PDF, PNG and JPEG files, and numbered captions. A table kept in its own
   file is drawn where its `\input{tables/…}` stands and redrawn when the file changes on disk.
@@ -122,7 +134,15 @@ single source of truth:
   assistant) appear in the visual editor immediately. Concurrent edits are rebased rather than
   overwritten.
 
-There is no TeX run involved. A small scanner in [`src/webview/latex.js`](src/webview/latex.js)
+Saving compiles, if you use LaTeX Workshop to build. LaTeX Workshop itself only builds while a
+text editor is the active editor, so for a save made from the visual editor TeX Visual runs its
+recipe instead: the tools of the recipe named by `latex-workshop.latex.recipe.default` (else the
+first one), with the same placeholders, in the same folder. It follows
+`latex-workshop.latex.autoBuild.run` (nothing is built when that is `never`), prints what the tools
+say to the *TeX Visual* output channel, and LaTeX Workshop's PDF viewer reloads when the PDF
+changes. Turn it off with `texVisual.buildOnSave`.
+
+Rendering involves no TeX run. A small scanner in [`src/webview/latex.js`](src/webview/latex.js)
 tokenizes the file on each change (a couple of milliseconds for a typical paper) and
 [`src/webview/decorate.js`](src/webview/decorate.js) decides what to draw.
 
@@ -134,6 +154,7 @@ tokenizes the file on each change (a couple of milliseconds for a typical paper)
 | `texVisual.fontFamily` | `""` | CSS `font-family` for body text (default: Charter, Palatino, Georgia) |
 | `texVisual.maxWidth` | `46` | width of the text column, in rem |
 | `texVisual.followCursor` | `true` | keep the visual editor and a text editor on the same file scrolled together |
+| `texVisual.buildOnSave` | `true` | compile with the LaTeX Workshop recipe when a file is saved from the visual editor |
 
 Colors follow your VS Code theme, light or dark.
 
@@ -149,6 +170,9 @@ Colors follow your VS Code theme, light or dark.
   changed in the source (`</>` on the table). An edit of an `\input` table is undone in that file,
   not from the document that includes it; a table a script generates is overwritten the next time
   the script runs.
+- A build started from the visual editor reports its errors in the *TeX Visual* output channel, not
+  in the Problems panel. It runs the default (or first) recipe: the recipe LaTeX Workshop used last
+  and `% !TEX program` comments are not followed (`% !LW recipe = …` is).
 - LaTeX Workshop's IntelliSense does not reach into the visual editor. It has its own completion:
   labels after `\ref{`, keys after `\cite{`, environments after `\begin{`, and the common
   commands and your own macros after a backslash.

@@ -2,14 +2,17 @@
 // converter for widgets (title block, table cells, item labels), and tabular rendering.
 import katex from 'katex';
 import { scan, matchBrace, today } from './latex.js';
+import { cssColor } from './color.js';
 
 let macros = {};
 let macroSig = null;
+let colorMeta = null;      // the document's colors, for the ones math names
 let cache = new Map();
 export let renderGen = 0; // bumps whenever macros change, so widgets know to re-render
 
-export function setMacros(defs) {
-  const sig = defs.map((d) => d.tex).join('\n');
+export function setMacros(defs, meta = null) {
+  const sig = defs.map((d) => d.tex).join('\n') + '\n' + (meta && meta.colorSig || '');
+  colorMeta = meta;
   if (sig === macroSig) return false;
   macroSig = sig;
   macros = {};
@@ -26,10 +29,22 @@ export function setMacros(defs) {
   return true;
 }
 
+// KaTeX takes CSS colors only: give it the color that an xcolor name, a color of the document's
+// or a mix (red!60!black) stands for.
+const mathColors = (tex) => (tex.includes('color{') || tex.includes('color[')
+  ? tex.replace(/\\(textcolor|color|colorbox)\s*(?:\[([^\]]*)\]\s*)?\{([^{}#]*)\}/g, (m, cmd, model, spec) => {
+    const c = cssColor(spec, model, colorMeta);
+    return c ? `\\${cmd}{${c}}` : m;
+  })
+  : tex);
+// …and its colors go through --tv-c like the colors of text, so a dark theme can lift them (app.css)
+const themedColors = (html) => html.replace(/(style="(?:[^"]*;)?)color:(#[0-9a-f]{6});/gi, '$1--tv-c:$2;');
+
 export function renderMath(tex, display) {
   const key = (display ? 'D' : 'I') + tex;
   let html = cache.get(key);
   if (html !== undefined) return html;
+  tex = mathColors(tex);
   try {
     html = katex.renderToString(tex, {
       displayMode: display, throwOnError: true, strict: 'ignore', output: 'html', macros, trust: false,
@@ -45,6 +60,7 @@ export function renderMath(tex, display) {
       html = `<span class="tv-math-err" title="${esc(msg)}">${esc(tex)}</span>`;
     }
   }
+  html = themedColors(html);
   if (cache.size > 8000) cache = new Map();
   cache.set(key, html);
   return html;
@@ -79,8 +95,20 @@ const STYLE_TAG = {
   tt: ['<code>', '</code>'], u: ['<u>', '</u>'], rm: ['<span class="tv-rm">', '</span>'],
   sf: ['<span class="tv-sf">', '</span>'], fn: ['<span class="tv-fn-inline"> (', ')</span>'],
   sup: ['<sup>', '</sup>'], sub: ['<sub>', '</sub>'], caption: ['', ''], href: ['<span class="tv-link">', '</span>'],
-  color: ['', ''],
+  color: ['', ''], strike: ['<s>', '</s>'],
 };
+
+/**
+ * The class and style that put a token's color and background on screen (and the strike-through
+ * a macro like \cut brings with its color), or null when it has none of them.
+ */
+export function colorAttrs(t) {
+  if (!t.color && !t.bg && !t.strike) return null;
+  return {
+    class: [t.color && 'tv-color', t.bg && 'tv-bgc', t.strike && 'tv-strike'].filter(Boolean).join(' '),
+    style: (t.color ? `--tv-c:${t.color};` : '') + (t.bg ? `--tv-b:${t.bg};` : ''),
+  };
+}
 
 /**
  * Convert a short run of LaTeX text to HTML. ctx may provide refText(key, name) and
@@ -104,8 +132,15 @@ export function texToHtml(src, ctx = {}) {
           break;
         }
         const tag = t.type === 'section' ? STYLE_TAG.b : STYLE_TAG[t.kind] || ['', ''];
-        ev.push({ from: t.open.from, to: t.open.to, html: tag[0] });
-        ev.push({ from: t.close.from, to: t.close.to, html: tag[1] });
+        const c = colorAttrs(t);
+        ev.push({ from: t.open.from, to: t.open.to, html: (c ? `<span class="${c.class}" style="${c.style}">` : '') + tag[0] });
+        ev.push({ from: t.close.from, to: t.close.to, html: tag[1] + (c ? '</span>' : '') });
+        break;
+      }
+      case 'colorsw': {          // \color{…}: a span from the command to the end of its group
+        const c = colorAttrs(t);
+        ev.push({ from: t.from, to: t.to, html: c ? `<span class="${c.class}" style="${c.style}">` : '' });
+        if (c) ev.push({ from: t.scopeTo, to: t.scopeTo, html: '</span>' });
         break;
       }
       case 'ref': ev.push({ from: t.from, to: t.to, html: esc(ctx.refText ? ctx.refText(t) : t.keys.join(', ')) }); break;

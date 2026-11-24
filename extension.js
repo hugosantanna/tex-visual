@@ -5,6 +5,7 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const project = require('./lib/project');
+const build = require('./lib/build');
 
 const VIEW_TYPE = 'texVisual.editor';
 
@@ -28,6 +29,7 @@ function activate(context) {
     vscode.commands.registerCommand('texVisual.togglePreamble', () => provider.command('togglePreamble')),
     vscode.commands.registerCommand('texVisual.showSource', () => provider.showSource()),
     vscode.commands.registerCommand('texVisual.editAsText', () => vscode.commands.executeCommand('workbench.action.reopenTextEditor')),
+    vscode.commands.registerCommand('texVisual.build', () => provider.buildCommand()),
     vscode.commands.registerCommand('texVisual._debug', (payload) => provider.debug(payload)),
     vscode.workspace.onDidChangeTextDocument((e) => provider.onDocChange(e)),
     vscode.workspace.onDidSaveTextDocument((d) => provider.onDocSaved(d)),
@@ -94,7 +96,13 @@ class TexVisualProvider {
     this.debugWaiters = new Map();
     this.debugId = 0;
     this.log = vscode.window.createOutputChannel('TeX Visual');
-    context.subscriptions.push(this.log);
+    this.building = null;        // the panel whose project is being compiled
+    this.buildAgain = null;      // saved again while that ran: compile once more afterwards
+    this.buildChild = null;
+    this.lastBuild = 0;
+    this.buildFailed = false;
+    this.quietSave = false;
+    context.subscriptions.push(this.log, { dispose: () => { if (this.buildChild) this.buildChild.kill(); } });
   }
 
   config() {
@@ -282,6 +290,93 @@ class TexVisualProvider {
   onDocSaved(document) {
     for (const st of this.panels) {
       if (st.document === document || /\.(tex|bib|sty|cls)$/i.test(document.fileName)) this.scheduleRefresh(st, 300);
+    }
+    this.buildOnSave(document);
+  }
+
+  // ---- compiling
+  //
+  // LaTeX Workshop compiles on save only while a text editor is the active editor; with the visual
+  // editor in front it logs "Cannot start to build because the active editor is undefined" and
+  // stops. In exactly that case its recipe is run from here (lib/build.js).
+
+  buildOnSave(document) {
+    if (this.quietSave || vscode.window.activeTextEditor) return;      // LaTeX Workshop takes this save itself
+    if (!vscode.workspace.getConfiguration('texVisual').get('buildOnSave', true)) return;
+    const st = [...this.panels].find((s) => s.panel.active);
+    if (!st || st.document.uri.scheme !== 'file') return;
+    // the file in the visual editor, or one it \input's (a table cell edited there is saved to its own file)
+    if (st.document !== document && !Object.values(st.inputFiles || {}).includes(document.uri.fsPath)) return;
+    const lw = vscode.workspace.getConfiguration('latex-workshop', st.document.uri);
+    if (lw.get('latex.autoBuild.run', 'onFileChange') === 'never') return;
+    if (Date.now() - this.lastBuild < lw.get('latex.autoBuild.interval', 1000)) return;
+    this.build(st, true);
+  }
+
+  async buildCommand() {
+    const st = this.activePanel();
+    if (!st || st.document.uri.scheme !== 'file') return;
+    if (st.document.isDirty) {
+      this.quietSave = true;                 // this save is followed by the build asked for, not by one of its own
+      try { await st.document.save(); } finally { this.quietSave = false; }
+    }
+    await this.build(st, false);
+  }
+
+  async build(st, auto) {
+    if (this.building) { this.buildAgain = st; return; }               // one at a time
+    this.building = st;
+    this.lastBuild = Date.now();
+    const complain = (text) => {
+      this.log.appendLine('[build] ' + text);
+      // while typing with auto-save a broken state comes and goes: say it once, then stay in the status bar
+      if (auto && this.buildFailed) { vscode.window.setStatusBarMessage('$(warning) TeX Visual: ' + text, 6000); return; }
+      vscode.window.showWarningMessage('TeX Visual: ' + text, 'Show Log').then((pick) => { if (pick) this.log.show(true); });
+    };
+    try {
+      const file = st.document.uri.fsPath, text = st.document.getText();
+      const rootFile = (await project.findRoot(file, text)) || file;
+      const rootText = rootFile === file ? text : await fs.promises.readFile(rootFile, 'utf8').catch(() => '');
+      if (!/\\documentclass/.test(rootText)) {
+        if (!auto) complain(`cannot find the root file of ${path.basename(file)}.`);
+        return;
+      }
+      const uri = vscode.Uri.file(rootFile);
+      const lw = vscode.workspace.getConfiguration('latex-workshop', uri);
+      const folder = vscode.workspace.getWorkspaceFolder(uri);
+      const first = (vscode.workspace.workspaceFolders || [])[0];
+      const fromFolder = lw.get('latex.build.fromFolder', '');
+      const plan = build.plan(rootFile, {
+        recipes: lw.get('latex.recipes'), tools: lw.get('latex.tools'), recipeDefault: lw.get('latex.recipe.default', 'first'),
+        magic: lw.get('latex.build.enableMagicComments', true), outDir: lw.get('latex.outDir'), auxDir: lw.get('latex.auxDir'),
+        workspaceDir: first ? first.uri.fsPath : '',
+        cwd: fromFolder ? path.resolve(folder ? folder.uri.fsPath : path.dirname(rootFile), fromFolder) : path.dirname(rootFile),
+      }, rootText);
+      if (plan.error) {
+        if (!auto) complain(plan.error + ' (TeX Visual compiles with the recipes of the LaTeX Workshop extension).');
+        return;
+      }
+      this.log.appendLine(`\n[build] ${rootFile} · recipe "${plan.recipe}"`);
+      const res = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Window, title: `TeX Visual: building ${path.basename(rootFile)}` },
+        () => build.run(plan, (s) => this.log.append(s), { onSpawn: (child) => { this.buildChild = child; } }));
+      this.buildChild = null;
+      if (res.ok) {
+        this.buildFailed = false;
+        this.log.appendLine('[build] done');
+        vscode.window.setStatusBarMessage(`$(check) TeX Visual: built ${path.basename(rootFile)}`, 4000);
+      } else {
+        complain(`the build of ${path.basename(rootFile)} failed at ${res.step} (${res.error || 'exit code ' + res.code}).`);
+        this.buildFailed = true;
+      }
+      for (const s of this.panels) this.scheduleRefresh(s, 200);      // new .aux: numbers the editor could not work out itself
+    } catch (e) {
+      this.log.appendLine('build failed: ' + (e && e.stack || e));
+    } finally {
+      this.building = null;
+      const again = this.buildAgain;
+      this.buildAgain = null;
+      if (again && this.panels.has(again)) this.build(again, true);
     }
   }
 

@@ -34,6 +34,21 @@ export default async function (t) {
   const refs = await text('.tv-ref');
   t.assert(refs.includes('Table 1') && refs.includes('Figure 1') && refs.includes('Table A1'), '\\cref uses \\crefname and the appendix number: ' + refs.join(' · '));
 
+  // a paragraph fills its lines the same way however its source is wrapped: the introduction is
+  // written on four lines, the abstract on one
+  const flow = await page.evaluate(() => {
+    const v = window.__tv.view, doc = v.state.doc, src = doc.toString();
+    const para = (needle) => {
+      const at = src.indexOf(needle), b = v.lineBlockAt(at);
+      const n = v.domAtPos(at + 1).node, el = (n.nodeType === 1 ? n : n.parentElement).closest('.cm-line');
+      return { lines: doc.lineAt(b.to).number - doc.lineAt(b.from).number + 1, joins: el.querySelectorAll('.tv-join').length, text: el.textContent };
+    };
+    return { intro: para('Whether minimum wages'), abstract: para('We revisit the employment'), kept: src.includes('Panel studies\noften find') };
+  });
+  t.assert(flow.intro.lines === 4 && flow.intro.joins === 3 && flow.abstract.lines === 1 && flow.abstract.joins === 0, 'a paragraph wrapped in the source is one paragraph on screen: ' + flow.intro.lines + ' source lines');
+  t.assert(/Panel studies often find/.test(flow.intro.text) && /for our sample, Figure 1 shows/.test(flow.intro.text), 'its line breaks read as spaces');
+  t.assert(flow.kept, 'and the source keeps its line breaks');
+
   // the table: both \input files drawn in place, panel headings, notes
   await t.scrollTo('\\begin{table}[t]', 'start');
   await t.sleep(300);

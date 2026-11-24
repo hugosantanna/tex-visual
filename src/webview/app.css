@@ -114,6 +114,7 @@ body { margin: 0; padding: 0 !important; background: var(--tv-bg); color: var(--
 .tv-sc { font-variant: small-caps; }
 .tv-tt { font-family: var(--tv-mono); font-size: 0.86em; }
 .tv-u { text-decoration: underline; }
+.tv-strike { text-decoration: line-through; }
 .tv-sf { font-family: system-ui, sans-serif; }
 .tv-sup { vertical-align: super; font-size: 0.75em; }
 .tv-sub { vertical-align: sub; font-size: 0.75em; }
@@ -121,6 +122,13 @@ body { margin: 0; padding: 0 !important; background: var(--tv-bg); color: var(--
 .tv-fn-mark { font-size: 0.62em; vertical-align: super; color: var(--tv-accent); margin: 0 3px 0 1px; font-family: system-ui, sans-serif; }
 .tv-link { color: var(--tv-accent); }
 .tv-sym { white-space: pre; }
+/* \textcolor and \color set --tv-c (in math too), \hl and \colorbox set --tv-b. The background lets a selection show through. */
+.tv-color, .katex [style*="--tv-c:"] { color: var(--tv-c); }
+.tv-bgc { background-color: color-mix(in srgb, var(--tv-b) 80%, transparent); border-radius: 2px; }
+/* On a dark theme a color keeps its hue but is lifted off the background; on a highlight the text stays as dark as on paper. */
+:where(body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light), body[data-theme="dark"]) .tv-color,
+:where(body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light), body[data-theme="dark"]) .katex [style*="--tv-c:"] { color: oklch(from var(--tv-c) max(l, var(--tv-lift, 0.72)) c h); }
+:where(body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light), body[data-theme="dark"]) .tv-bgc { --tv-lift: 0; color: var(--tv-c, #1f2328); }
 .tv-macro { cursor: text; }
 
 /* ---------- references */

@@ -1,6 +1,7 @@
 // Lightweight LaTeX scanner. Produces a flat, position-sorted token list that the
 // decoration layer turns into rendered widgets. It is deliberately forgiving: anything
 // it does not understand is left alone and shows up as plain source.
+import { findColor, cssColor } from './color.js';
 
 export const MATH_ENVS = new Set([
   'equation', 'equation*', 'align', 'align*', 'gather', 'gather*', 'multline', 'multline*',
@@ -27,7 +28,7 @@ const STYLE = {
 };
 // \name{layout}...{content}: the leading arguments only steer layout, the last one is text.
 const WRAP = {
-  parbox: 1, multirow: 2, resizebox: 2, scalebox: 1, raisebox: 1, rotatebox: 1, colorbox: 1,
+  parbox: 1, multirow: 2, resizebox: 2, scalebox: 1, raisebox: 1, rotatebox: 1,
   makebox: 0, fbox: 0, framebox: 0, makecell: 0, shortstack: 0, hyperref: 0, floatfoot: 0,
   centerline: 0, thead: 0,
 };
@@ -58,6 +59,7 @@ export const HIDE = new Set([
   'flushbottom', 'raggedbottom', 'frenchspacing', 'selectfont', 'strut', 'null', 'hrulefill',
   'justifying', 'midsloppy', 'fussy', 'allowdisplaybreaks', 'leavevmode', 'smallbreak',
   'medbreak', 'bigbreak', 'vfil', 'hfil', 'onecolumn', 'twocolumn', 'maketitlepage', 'hrule',
+  'newblock',
 ]);
 // Layout commands with arguments: shown as source in the preamble, hidden in the body.
 export const HIDE_RAW = new Set([
@@ -66,6 +68,7 @@ export const HIDE_RAW = new Set([
   'bibliographystyle', 'numberwithin', 'counterwithin', 'setstretch', 'phantom', 'hphantom', 'vphantom',
   'crefalias', 'crefname', 'Crefname',
   'vskip', 'hskip', 'addvspace', 'pdfbookmark', 'addcontentsline', 'markboth', 'markright',
+  'sethlcolor',
 ]);
 // Commands shown as dim source together with their arguments.
 const RAW_ARGS = {
@@ -79,7 +82,13 @@ const RAW_ARGS = {
   captionsetup: 1, addtolength: 2, enlargethispage: 1, fontsize: 2, setstretch: 1,
   hphantom: 1, vphantom: 1, addvspace: 1, pdfbookmark: 2, addcontentsline: 3, markboth: 2,
   markright: 1, crefname: 3, Crefname: 3, crefalias: 2, listoffigures: 0, listoftables: 0,
+  colorlet: 2, providecolor: 3, sethlcolor: 1,
 };
+const COLOR_DEF = new Set(['definecolor', 'providecolor', 'colorlet']);
+// What soul, ulem and xcolor mark an argument with. A macro of the document's with the same
+// name wins: \st is as often "s.t." as it is soul's strike-through.
+const MARKUP = { hl: 'plain', colorbox: 'plain', st: 'strike', sout: 'strike' };
+const HL_DEFAULT = '#ffff00';   // soul's \hl is yellow until \sethlcolor says otherwise
 const SYMBOLS = {
   ldots: '…', dots: '…', textellipsis: '…', LaTeX: 'LaTeX', TeX: 'TeX', textbackslash: '\\',
   S: '§', P: '¶', copyright: '©', pounds: '£', textendash: '–', textemdash: '—',
@@ -156,6 +165,59 @@ function stripComments(s) {
   return s.replace(/(^|[^\\])%.*$/gm, '$1');
 }
 
+/** \definecolor{name}{model}{values} or \colorlet{name}{color}, its arguments starting at text[i]: kept in meta.colors. */
+function readColorDef(text, name, i, meta) {
+  const arg = (r) => text.slice(r.from + 1, r.to - 1);
+  const o = readOpt(text, i);
+  const a = readReq(text, o ? o.to : i);
+  if (!a) return;
+  let c = null;
+  if (name === 'colorlet') {
+    const o2 = readOpt(text, a.to), b = readReq(text, o2 ? o2.to : a.to);
+    c = b && findColor(arg(b), null, meta);
+  } else {
+    const b = readReq(text, a.to), v = b && readReq(text, b.to);
+    c = v && findColor(arg(v), arg(b), meta);
+  }
+  if (c) meta.colors[arg(a).trim()] = c;
+}
+
+/** Where the group or environment that text[i] is in ends: what a \color{…} written at i reaches. */
+function scopeEnd(text, i) {
+  let depth = 0, env = 0;
+  for (let j = i; j < text.length; j++) {
+    const c = text.charCodeAt(j);
+    if (c === 92) {
+      if (text.startsWith('begin{', j + 1)) env++;
+      else if (text.startsWith('end{', j + 1) && env-- === 0) return j;
+      j++;
+    } else if (c === 37) {
+      const nl = text.indexOf('\n', j);
+      if (nl < 0) break;
+      j = nl;
+    } else if (c === 123) depth++;
+    else if (c === 125 && depth-- === 0) return j;
+  }
+  return text.length;
+}
+
+/**
+ * What a macro that wraps its argument does to it: the color, background and strike-through in
+ * force at #1 in \newcommand{\edit}[1]{\textcolor{blue}{#1}}, {\color{blue}\bfseries #1} or
+ * \textcolor{red}{\sout{#1}}.
+ */
+function wrapStyle(body, meta) {
+  const at = body.indexOf('#1'), st = {};
+  for (const t of scan(body, { fragment: true, meta }).tokens) {
+    if (t.type === 'style' && t.inner.from <= at && at < t.inner.to) {
+      if (t.color) st.color = t.color;
+      if (t.bg) st.bg = t.bg;
+      if (t.kind === 'strike' || t.strike) st.strike = true;
+    } else if (t.type === 'colorsw' && t.color && t.to <= at && at < t.scopeTo) st.color = t.color;
+  }
+  return st;
+}
+
 function composeAccent(base, mark) {
   if (base === '\\i' || base === 'ı') base = 'i';
   return (base + mark).normalize('NFC');
@@ -167,8 +229,9 @@ export function parsePreamble(src) {
   const meta = {
     defs: [], theorems: {}, title: null, author: null, date: undefined,
     numberWithin: {}, graphicsPaths: [], bibFiles: [], crefNames: {}, the: {}, counters: {},
-    textMacros: {}, wrapMacros: {},
+    textMacros: {}, wrapMacros: {}, colors: {}, svgnames: /\bsvgnames\b/.test(text), hlColor: null,
   };
+  const wraps = {};            // wrapping macros and their bodies
   let style = 'plain';
   const re = /\\([a-zA-Z]+)(\*?)/g;
   let m;
@@ -188,7 +251,7 @@ export function parsePreamble(src) {
       // macros of the document's own that show up in running text: \newcommand{\nObs}{11,672}, \newcommand{\edit}[1]{\textcolor{blue}{#1}}
       if (/^\\[a-zA-Z]+$/.test(macro) && !has(RAW_ARGS, macro.slice(1))) {
         if (nargs === 0 && dflt === null) meta.textMacros[macro.slice(1)] = body;
-        else if (nargs === 1 && dflt === null && body.includes('#1')) meta.wrapMacros[macro.slice(1)] = true;
+        else if (nargs === 1 && dflt === null && body.includes('#1')) { meta.wrapMacros[macro.slice(1)] = {}; wraps[macro.slice(1)] = body; }
       }
       if (dflt !== null) {
         // KaTeX has no optional arguments: bake the default in.
@@ -267,9 +330,17 @@ export function parsePreamble(src) {
     } else if (name === 'bibliography' || name === 'addbibresource') {
       const a = readReq(text, after);
       if (a) for (const f of text.slice(a.from + 1, a.to - 1).split(',')) if (f.trim()) meta.bibFiles.push(f.trim());
+    } else if (COLOR_DEF.has(name)) {
+      readColorDef(text, name, after, meta);
+    } else if (name === 'sethlcolor') {
+      const a = readReq(text, after);
+      if (a) meta.hlColor = text.slice(a.from + 1, a.to - 1);
     }
     void at;
   }
+  // only now is every color known: a macro may use one that is defined after it
+  if (meta.hlColor) meta.hlColor = cssColor(meta.hlColor, null, meta);
+  for (const k in wraps) meta.wrapMacros[k] = wrapStyle(wraps[k], meta);
   return meta;
 }
 
@@ -348,6 +419,8 @@ export function scan(text, opts = {}) {
   const push = (t) => { tokens.push(t); return t; };
   let i = bodyFrom;
   let tail = -1;
+  let hl = meta.hlColor || HL_DEFAULT;      // what \hl paints with
+  const groups = [];                         // \color{…} right after a brace, which may be a bare group
 
   while (i < n) {
     const c = text.charCodeAt(i);
@@ -448,6 +521,18 @@ export function scan(text, opts = {}) {
 
   while (stack.length) stack.pop(); // unclosed environments are simply left as source
   envs.sort((a, b) => a.from - b.from);
+  if (groups.length) {
+    // {\color{red} …}: the braces go with the command, unless they are some command's argument
+    const args = new Set();
+    for (const t of tokens) if (t.inner) args.add(t.inner.from - 1);
+    for (const t of groups) {
+      if (args.has(t.brace)) continue;
+      t.open = { from: t.brace, to: t.brace + 1 };
+      t.close = { from: t.scopeTo, to: t.scopeTo + 1 };
+    }
+  }
+  // what the colors of this document are, for whatever caches things drawn with them
+  if (!opts.fragment) meta.colorSig = JSON.stringify([meta.colors, meta.wrapMacros, meta.hlColor, meta.svgnames]);
   return { tokens, envs, bodyFrom, tail, meta, theoremNames, titleSrc };
 
   // ---- helpers (closures over text/tokens) ----
@@ -579,10 +664,13 @@ export function scan(text, opts = {}) {
     if (has(STYLE, name)) {
       const kind = STYLE[name];
       if (kind === 'href' || kind === 'color') {
-        const u = readReq(text, j), a = u && readReq(text, u.to);
+        const o = kind === 'color' ? readOpt(text, j) : null;          // \textcolor[rgb]{1,0,0}{…}
+        const u = readReq(text, o ? o.to : j), a = u && readReq(text, u.to);
         if (!a) { push({ type: 'cs', name, from, to: j }); return j; }
+        const arg = text.slice(u.from + 1, u.to - 1);
         push({
-          type: 'style', name, kind, from, to: a.to, url: text.slice(u.from + 1, u.to - 1),
+          type: 'style', name, kind, from, to: a.to, url: arg,
+          color: kind === 'color' ? cssColor(arg, o && text.slice(o.from + 1, o.to - 1), meta) : null,
           open: { from, to: a.from + 1 }, close: { from: a.to - 1, to: a.to }, inner: { from: a.from + 1, to: a.to - 1 },
         });
         return a.from + 1;
@@ -688,11 +776,34 @@ export function scan(text, opts = {}) {
       while (ok && (o = readOpt(text, k))) k = o.to;
       const a = ok && text.charCodeAt(skipSpace(text, k)) === 123 ? readReq(text, k) : null;
       if (!a) { push({ type: 'cs', name, from, to: j }); return j; }
-      push({
+      push(Object.assign({
         type: 'style', name, kind: name === 'parbox' || name === 'floatfoot' ? 'notes' : 'plain', from, to: a.to,
         open: { from, to: a.from + 1 }, close: { from: a.to - 1, to: a.to }, inner: { from: a.from + 1, to: a.to - 1 },
-      });
+      }, has(WRAP, name) ? null : meta.wrapMacros[name]));     // a macro of the document's brings its color along
       return a.from + 1;
+    }
+    if (has(MARKUP, name) && !meta.defs.some((d) => d.name === '\\' + name)) {
+      // \hl{text} and \colorbox[model]{color}{text} put a background behind it, \st and \sout a line through it
+      let bg = name === 'hl' ? hl : null, k = j;
+      if (name === 'colorbox') {
+        const o = readOpt(text, j), c = readReq(text, o ? o.to : j);
+        if (!c) { push({ type: 'cs', name, from, to: j }); return j; }
+        bg = cssColor(text.slice(c.from + 1, c.to - 1), o && text.slice(o.from + 1, o.to - 1), meta);
+        k = c.to;
+      }
+      return argCommand('style', name, from, k, { kind: MARKUP[name], bg });
+    }
+    if (name === 'color') {   // \color[model]{color}: colors what follows, to the end of the group or environment it is in
+      const o = readOpt(text, j), a = readReq(text, o ? o.to : j);
+      if (!a) { push({ type: 'cs', name, from, to: j }); return j; }
+      const tok = push({
+        type: 'colorsw', from, to: a.to, scopeTo: scopeEnd(text, a.to),
+        color: cssColor(text.slice(a.from + 1, a.to - 1), o && text.slice(o.from + 1, o.to - 1), meta),
+      });
+      let b = from - 1;
+      while (b >= 0 && (text.charCodeAt(b) === 32 || text.charCodeAt(b) === 9)) b--;
+      if (text.charCodeAt(b) === 123 && text.charCodeAt(b - 1) !== 92 && text.charCodeAt(tok.scopeTo) === 125) { tok.brace = b; groups.push(tok); }
+      return a.to;
     }
     if (has(RAW_ARGS, name)) {
       let to = j;
@@ -710,6 +821,12 @@ export function scan(text, opts = {}) {
         to = a.to; got++;
       }
       const tok = push({ type: 'raw', name, from, to });
+      if (COLOR_DEF.has(name)) {
+        if (!opts.fragment) readColorDef(text, name, j, meta);      // a color defined in the body counts from here on
+      } else if (name === 'sethlcolor') {
+        const a = readReq(text, j);
+        hl = (a && cssColor(text.slice(a.from + 1, a.to - 1), null, meta)) || hl;
+      }
       if (name === 'renewcommand' || name === 'setcounter' || name === 'addtocounter' || name === 'numberwithin' || name === 'counterwithin') {
         // \renewcommand{\thetable}{A\arabic{table}} and \setcounter{table}{0} steer the numbering.
         const m = /^\\[a-zA-Z]+\*?\s*\{?\s*(\\?[a-zA-Z@]+)\s*\}?\s*(?:\[[^\]]*\]\s*)*\{/.exec(text.slice(from, to));
@@ -732,6 +849,132 @@ export function scan(text, opts = {}) {
     if (text.charCodeAt(j) === 123 && text.charCodeAt(j + 1) === 125) return j + 2;
     return j;
   }
+}
+
+// ------------------------------------------------------------------ line breaks inside a paragraph
+
+const BREAK_CS = new Set(['par', 'newline', 'linebreak', 'break']);
+
+/**
+ * The line breaks of running text. TeX reads a single line break inside a paragraph as a space,
+ * so a paragraph is the same paragraph however its source is wrapped; these are the breaks the
+ * visual view draws as a space, to let every paragraph fill its lines the same way.
+ *
+ * A break counts when the lines on both sides print text and nothing asks for a new line there:
+ * no `\\`, \par or comment before it, no \item, \paragraph, \begin or \end after it. Display
+ * math, tables, verbatim, headings and lines that hold only commands keep their lines, and so
+ * does everything inside an environment that `keepLines(env)` is true for.
+ *
+ * Returns them in document order as { at, line, after }: `at` is the offset of the line break,
+ * `line` the start of the line it ends. `after` is 'label' when that line holds nothing but
+ * \label{…}: such a line runs on only if the line before it ran into it.
+ */
+export function softBreaks(text, sc, keepLines) {
+  const from = sc.bodyFrom, end = sc.tail >= 0 ? sc.tail : text.length;
+  if (end <= from) return [];
+  const starts = [from];
+  for (let i = text.indexOf('\n', from); i >= 0 && i < end; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  const L = starts.length;
+  const lineOf = (pos) => {
+    let lo = 0, hi = L - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= pos) lo = mid; else hi = mid - 1; }
+    return lo;
+  };
+  const endOf = (k) => (k + 1 < L ? starts[k + 1] - 1 : end);
+  const blank = (a, b) => { for (let i = a; i < b; i++) { const c = text.charCodeAt(i); if (c !== 32 && c !== 9) return false; } return true; };
+
+  const keep = new Uint8Array(L);       // the line stays a line of its own
+  const prints = new Uint8Array(L);     // it has a token that prints text
+  const labels = new Uint8Array(L);     // it has a \label
+  const noBefore = new Uint8Array(L);   // what it starts with begins a new line
+  const noAfter = new Uint8Array(L);    // what it ends with ends the line
+  const mask = new Uint8Array(end - from);   // characters that are command syntax, not text
+  const hide = (a, b) => mask.fill(1, Math.max(a, from) - from, Math.max(from, Math.min(b, end)) - from);
+  const span = (arr, a, b) => { for (let k = lineOf(a), k2 = lineOf(Math.max(a, Math.min(b, end) - 1)); k <= k2; k++) arr[k] = 1; };
+  const edges = (t) => {                // a command that opens the line, or closes it
+    const a = lineOf(t.from), b = lineOf(Math.min(t.to, end));
+    if (blank(starts[a], t.from)) noBefore[a] = 1;
+    if (blank(t.to, endOf(b))) noAfter[b] = 1;
+  };
+
+  for (const t of sc.tokens) {
+    if (t.from >= end) break;
+    const k = lineOf(t.from);
+    switch (t.type) {
+      case 'comment':
+        hide(t.from, t.to);
+        if (t.full) keep[k] = 1; else noAfter[k] = 1;
+        break;
+      case 'math':
+        span(t.display ? keep : prints, t.from, t.to);
+        break;
+      case 'tabular':
+        span(keep, t.from, t.to);
+        break;
+      case 'verb':
+        span(t.inline ? prints : keep, t.from, t.to);
+        break;
+      case 'section':
+        hide(t.open.from, t.open.to); hide(t.close.from, t.close.to);
+        if (t.level <= 3) span(keep, t.from, t.to);
+        else if (blank(starts[k], t.from)) noBefore[k] = 1;      // \paragraph{…} starts a paragraph
+        break;
+      case 'style':
+        hide(t.open.from, t.open.to); hide(t.close.from, t.close.to);
+        break;
+      case 'ref': case 'cite': case 'url':
+        span(prints, t.from, t.to);
+        break;
+      case 'sym':
+        if (t.text === '') hide(t.from, t.to); else prints[k] = 1;
+        break;
+      case 'label':
+        hide(t.from, t.to); labels[k] = 1;
+        break;
+      case 'item':
+        hide(t.from, t.to); prints[k] = 1;
+        if (blank(starts[k], t.from)) noBefore[k] = 1;
+        break;
+      case 'bibitem':
+        hide(t.from, t.to); noBefore[k] = 1;
+        break;
+      case 'begin': case 'end':
+        hide(t.from, t.to); edges(t);
+        break;
+      case 'enddoc':
+        hide(t.from, t.to); keep[k] = 1;
+        break;
+      case 'cs':
+        hide(t.from, t.to);
+        if ((t.br || BREAK_CS.has(t.name)) && blank(t.to, endOf(lineOf(Math.min(t.to, end))))) noAfter[lineOf(Math.min(t.to, end))] = 1;
+        break;
+      case 'colorsw':
+        hide(t.from, t.to);
+        break;
+      default:          // input, graphics, maketitle, raw: commands with their arguments
+        hide(t.from, t.to);
+    }
+  }
+  if (keepLines) for (const e of sc.envs) if (keepLines(e)) span(keep, e.from, e.to);
+
+  // 0: nothing to run on, 1: text, 2: only labels
+  const kind = new Uint8Array(L);
+  for (let k = 0; k < L; k++) {
+    if (keep[k]) continue;
+    let text1 = prints[k];
+    for (let i = starts[k], e = endOf(k); !text1 && i < e; i++) {
+      if (mask[i - from]) continue;
+      const c = text.charCodeAt(i);
+      if (c !== 32 && c !== 9 && c !== 123 && c !== 125) text1 = 1;
+    }
+    kind[k] = text1 ? 1 : labels[k] ? 2 : 0;
+  }
+  const out = [];
+  for (let k = 0; k + 1 < L; k++) {
+    if (!kind[k] || !kind[k + 1] || noAfter[k] || noBefore[k + 1]) continue;
+    out.push({ at: starts[k + 1] - 1, line: starts[k], after: kind[k] === 2 ? 'label' : 'text' });
+  }
+  return out;
 }
 
 export function today() {
@@ -827,7 +1070,7 @@ export function number(text, sc, inputs = {}) {
   };
   let listDepth = 0, enumDepth = 0;
   const open = [];                       // \input files being walked, to stop a file that includes itself
-  const metaSig = Object.keys(meta.theorems).join() + '|' + Object.keys(meta.wrapMacros).join();
+  const metaSig = Object.keys(meta.theorems).join() + '|' + Object.keys(meta.wrapMacros).join() + '|' + meta.colorSig;
 
   walk(sc.tokens, text, null);
   return { labels, bibitems, cited };

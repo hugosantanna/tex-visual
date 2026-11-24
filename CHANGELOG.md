@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.1
+
+- Saving from the visual editor compiles again. LaTeX Workshop builds only while a text editor is
+  the active editor, so with the visual editor in front a save compiled nothing. TeX Visual now
+  runs the LaTeX Workshop recipe itself in that case, and `Cmd+Alt+B` compiles on demand. The
+  tools' output goes to the *TeX Visual* output channel. `texVisual.buildOnSave` turns it off.
+- Fixed: folding the preamble again from its chip left the cursor on `\maketitle`, which replaced
+  the title block by that command until you clicked elsewhere. Folding now leaves nothing open.
+- With the cursor on `\maketitle` the title block stays, drawn under the command, so the title is
+  always there to click.
+- Colored text is colored. `\textcolor{…}{…}`, `{\color{…} …}`, `\hl{…}` (with `\sethlcolor`) and
+  `\colorbox{…}{…}` show their color in text, table cells, captions and math, and so does a macro
+  of your own that colors its argument, such as `\newcommand{\edit}[1]{\textcolor{red}{#1}}`.
+  Colors are xcolor's names (with `dvipsnames` and `svgnames`), the ones the document sets with
+  `\definecolor` and `\colorlet`, and mixes like `red!60!black`. On a dark theme a color keeps its
+  hue but is lightened enough to read.
+- `\sout{…}` and soul's `\st{…}` are struck through, also inside a macro of your own such as
+  `\newcommand{\cut}[1]{\textcolor{red}{\sout{#1}}}`.
+- Paragraphs look the same however their source is wrapped. A paragraph written on one long line
+  filled the page, while one wrapped at 80 columns or written a sentence per line broke wherever
+  the source did. Now a single line break inside a paragraph is drawn as the space TeX makes of
+  it, in text, list items, captions, notes, theorems and `thebibliography` entries, and a blank
+  line starts a new paragraph. The file is not touched: its line breaks stay where they are, and
+  the `</>` button shows them. `\\`, `\item`, headings, displays, tables, comments, lines that
+  hold only commands and environments the editor does not know keep their lines.
+- The text of a theorem runs on after a `\label` written on the line below its `\begin`, as it
+  already did after one written on the same line.
+- `\newblock` in a `thebibliography` entry is hidden.
+
 ## 0.3.0
 
 - Tables are editable where they are drawn. Click a cell to edit its LaTeX; `Tab`, `Shift+Tab`,

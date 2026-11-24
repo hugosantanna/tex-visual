@@ -2,8 +2,8 @@
 // reference chips, tables, list bullets. Anything the cursor touches falls back to source.
 import { Decoration, WidgetType, EditorView, showTooltip } from '@codemirror/view';
 import { StateField, StateEffect } from '@codemirror/state';
-import { scan, number, LIST_ENVS, HIDE, HIDE_RAW, FLOATS, SUBFLOATS } from './latex.js';
-import { renderMath, texToHtml, tabularHtml, titleHtml, inputHtml, referencesHtml, macroHtml, setMacros, esc, withGlue, isMathError } from './render.js';
+import { scan, number, softBreaks, LIST_ENVS, HIDE, HIDE_RAW, FLOATS, SUBFLOATS } from './latex.js';
+import { renderMath, texToHtml, tabularHtml, titleHtml, inputHtml, referencesHtml, macroHtml, setMacros, esc, withGlue, isMathError, colorAttrs } from './render.js';
 import { FigureWidget } from './figures.js';
 
 // ------------------------------------------------------------------ state
@@ -47,9 +47,11 @@ function parse(state) {
   const ext = state.field(externalField);
   const sc = scan(text, { rootPreamble: ext.rootPreamble });
   const num = number(text, sc, ext.inputs || {});
-  setMacros(sc.meta.defs);
+  setMacros(sc.meta.defs, sc.meta);
   const ctx = makeCtx(sc, num, ext);
-  return { sc, num, ctx };
+  // the line breaks that are a space to TeX; an environment the view does not know keeps its lines
+  const flow = softBreaks(text, sc, (e) => envKind(e.name, e.begin) === 'other');
+  return { sc, num, ctx, flow };
 }
 
 export const parseField = StateField.define({
@@ -178,7 +180,9 @@ class PreambleWidget extends WidgetType {
       const { sc } = view.state.field(parseField);
       const open = !this.open;
       const spec = { effects: setMode.of({ preambleOpen: open }) };
-      if (!open && view.state.selection.main.head < sc.bodyFrom) spec.selection = { anchor: Math.min(sc.bodyFrom, view.state.doc.length) };
+      // folding takes the cursor out of the preamble, to a place where it opens nothing (the first
+      // line of the body is usually \maketitle)
+      if (!open && view.state.selection.main.head < sc.bodyFrom) spec.selection = { anchor: neutralPos(view.state) };
       view.dispatch(spec);
       view.focus();
     });
@@ -386,6 +390,18 @@ class TableWidget extends WidgetType {
   ignoreEvent() { return true; }      // the table handles its own mouse and keys; the cursor stays put
 }
 
+/** A line break inside a paragraph, drawn as the space TeX makes of it. */
+class JoinWidget extends WidgetType {
+  eq() { return true; }
+  toDOM() {
+    const el = document.createElement('span');
+    el.className = 'tv-join';
+    el.textContent = ' ';
+    return el;
+  }
+  ignoreEvent() { return false; }
+}
+
 /** Subfigures of one float, side by side. */
 class SubRowWidget extends WidgetType {
   constructor(items) {
@@ -438,12 +454,18 @@ const LONG_CAPTION = 110; // characters; longer captions are set flush left like
 const STYLE_CLASS = {
   em: 'tv-em', b: 'tv-b', sc: 'tv-sc', tt: 'tv-tt', u: 'tv-u', rm: 'tv-rm', sf: 'tv-sf',
   fn: 'tv-fn', caption: 'tv-caption-text', href: 'tv-link', sup: 'tv-sup', sub: 'tv-sub',
+  strike: 'tv-strike',
 };
 const HIDE_INLINE = Decoration.replace({});
 const HIDE_BLOCK = Decoration.replace({ block: true });
+const JOIN = Decoration.replace({ widget: new JoinWidget() });
+const OWN_LINE = /(^| )tv-(src-line|pre|comment-line|h)[ |]/;   // line classes (in a lineKey) that never run into their neighbours
 const markCache = Object.create(null);
 const markDeco = (cls) => markCache[cls] || (markCache[cls] = Decoration.mark({ class: cls }));
+const colorCache = Object.create(null);
+const colorDeco = (a) => colorCache[a.class + a.style] || (colorCache[a.class + a.style] = Decoration.mark({ attributes: a }));
 const tableCache = new Map();
+let tableSig = null;        // the colors the cached tables were drawn with
 const lastGood = new Map(); // display-math position -> last rendering that parsed, shown while a formula is mid-edit
 
 function envKind(name, tok) {
@@ -459,11 +481,12 @@ function envKind(name, tok) {
 function build(state) {
   const mode = state.field(modeField);
   if (mode.source) return Decoration.none;
-  const { sc, ctx } = state.field(parseField);
+  const { sc, ctx, flow } = state.field(parseField);
   const ext = state.field(externalField);
   const doc = state.doc;
   const sel = state.selection.ranges;
   const main = state.selection.main;
+  const joined = new Set();  // line breaks drawn as a space
 
   const marks = [];          // mark + line decorations
   const reps = [];           // replace / widget decorations: {from, to, deco}
@@ -479,6 +502,8 @@ function build(state) {
     return false;
   };
   const mark = (from, to, cls) => { if (to > from) marks.push(markDeco(cls).range(from, to)); };
+  // the color and background a token gives the text in [from, to)
+  const paint = (from, to, t) => { const a = colorAttrs(t); if (a && to > from) marks.push(colorDeco(a).range(from, to)); };
   const rep = (from, to, deco) => { reps.push({ from, to, deco }); };
   const hidden = [];         // inline-hidden ranges, to collapse lines that show nothing at all
   const hide = (from, to) => { if (to > from) { rep(from, to, HIDE_INLINE); hidden.push({ from, to }); } };
@@ -525,6 +550,7 @@ function build(state) {
     }
     return fs && fs !== 1 ? { style: `--tv-fs:${fs}` } : null;
   };
+  if (tableSig !== sc.meta.colorSig) { tableSig = sc.meta.colorSig; tableCache.clear(); }
   const cachedTable = (key, make) => {
     let html = tableCache.get(key);
     if (html === undefined) {
@@ -667,6 +693,7 @@ function build(state) {
         const rev = touch(t.from, t.to);
         const cls = STYLE_CLASS[t.kind];
         if (cls) mark(t.inner.from, t.inner.to, cls);
+        paint(t.inner.from, t.inner.to, t);
         if (t.kind === 'caption') {
           const cls = 'tv-caption' + (t.inner.to - t.inner.from > LONG_CAPTION ? ' tv-caption-long' : '');
           eachLine(t.from, t.to, (l) => addLine(l.from, cls));
@@ -777,6 +804,7 @@ function build(state) {
             const nl = doc.line(hl.number + 1);
             if (nl.text.trim() !== '' && !/^\s*(\\begin\{|\\end\{|\\item\b|\\\[|\$\$)/.test(nl.text)) {
               rep(hl.to, hl.to + 1, Decoration.replace({ widget: new HtmlWidget(' ', 'tv-sym') }));
+              joined.add(hl.to);
             }
           }
           break;
@@ -824,8 +852,14 @@ function build(state) {
 
       case 'maketitle': {
         const o = own(t.from, t.to);
-        if (!o || touch(o.from, o.to)) { mark(t.from, t.to, 'tv-cs'); break; }
-        widget(o.from, o.to, new HtmlWidget(titleHtml(sc.meta, ctx), 'tv-titleblock', 'div', 130), true);
+        if (!o) { mark(t.from, t.to, 'tv-cs'); break; }
+        const html = titleHtml(sc.meta, ctx);
+        if (!touch(o.from, o.to)) widget(o.from, o.to, new HtmlWidget(html, 'tv-titleblock', 'div', 130), true);
+        else {
+          // the cursor on \maketitle: the command, with the title block kept under it (and still clickable)
+          mark(t.from, t.to, 'tv-cs');
+          rep(o.to, o.to, Decoration.widget({ widget: new HtmlWidget(html, 'tv-titleblock tv-preview', 'div', 130), block: true, side: 1 }));
+        }
         break;
       }
 
@@ -851,6 +885,20 @@ function build(state) {
         if (touch(o ? o.from : t.from, o ? o.to : t.to)) mark(t.from, t.to, 'tv-cs');
         else if (o) rep(o.from, o.to, HIDE_BLOCK);
         else hide(t.from, next(t.to) === ' ' ? t.to + 1 : t.to);
+        break;
+      }
+
+      case 'colorsw': {
+        // \color{red}: what follows is red to the end of its group. In {\color{red} …} the braces
+        // are part of the command, shown and hidden with it.
+        paint(t.to, t.scopeTo, t);
+        if (touch(t.open ? t.open.from : t.from, t.close ? t.close.to : t.to)) {
+          mark(t.open ? t.open.from : t.from, t.to, 'tv-cs');
+          if (t.close) mark(t.close.from, t.close.to, 'tv-cs');
+        } else {
+          hide(t.open ? t.open.from : t.from, next(t.to) === ' ' ? t.to + 1 : t.to);
+          if (t.close) hide(t.close.from, t.close.to);
+        }
         break;
       }
 
@@ -965,6 +1013,33 @@ function build(state) {
       if (pos > l.to || /\S/.test(doc.sliceString(pos, l.to))) ok = false;
       if (ok && !touch(l.from, l.to)) rep(l.from, l.to, HIDE_BLOCK);
       k = q;
+    }
+  }
+
+  // ---- a line break inside a paragraph is a space, as it is to TeX: a paragraph fills its lines
+  // the same way however its source is wrapped. The source keeps its line breaks.
+  if (flow.length) {
+    // whole lines taken by a block widget stay out of it
+    const blocks = [];
+    for (const r of reps) if (r.deco.spec.block) blocks.push([r.from, r.to]);
+    blocks.sort((a, b) => a[0] - b[0]);
+    let bi = 0, reach = -1;                 // reach: how far the blocks starting before `bi` extend
+    const lineKey = (from, lead) => {
+      const li = lines.get(from);
+      if (!li) return '|0';
+      const cls = (lead ? li.cls.filter((c) => c !== 'tv-li-first') : li.cls).slice().sort().join(' ');
+      return cls + '|' + li.indent;
+    };
+    for (const b of flow) {
+      if (b.after === 'label' && !joined.has(b.line - 1)) continue;
+      while (bi < blocks.length && blocks[bi][0] <= b.at + 1) { if (blocks[bi][1] > reach) reach = blocks[bi][1]; bi++; }
+      if (reach >= b.at) continue;
+      const ka = lineKey(b.line, true), kb = lineKey(b.at + 1, false);
+      if (ka !== kb || OWN_LINE.test(ka)) continue;
+      // a space is already there when the line ends in one
+      const c = b.at > b.line ? doc.sliceString(b.at - 1, b.at) : '';
+      rep(b.at, b.at + 1, c === ' ' || c === '\t' ? HIDE_INLINE : JOIN);
+      joined.add(b.at);
     }
   }
 
